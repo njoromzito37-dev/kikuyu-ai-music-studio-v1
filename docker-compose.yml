@@ -1,0 +1,23 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: kikuyu_postgres
+    environment:
+      POSTGRES_DB: kikuyu_music
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: kikuyu_redis
+    ports:
+      - "6379:6379"
+
+volumes:
+  postgres_data:
