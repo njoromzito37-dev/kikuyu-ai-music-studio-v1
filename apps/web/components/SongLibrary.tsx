@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 const API_BASE = "/api";
 
@@ -25,6 +25,36 @@ export default function SongLibrary({ refreshKey, onSelect, onReuse, onRemaster 
   const [songs, setSongs] = useState<LibrarySong[]>([]);
   const [loading, setLoading] = useState(true);
   const [remastering, setRemastering] = useState<string | null>(null);
+  const [playingId, setPlayingId] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const resolveUrl = (url: string) => (url.startsWith("/") ? `${API_BASE}${url}` : url);
+
+  const togglePlay = async (song: LibrarySong) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (playingId === song.job_id) {
+      audio.pause();
+      setPlayingId(null);
+      return;
+    }
+    audio.src = resolveUrl(song.audio_url);
+    try {
+      await audio.play();
+      setPlayingId(song.job_id);
+    } catch (error) {
+      console.error("Playback failed", error);
+      setPlayingId(null);
+    }
+  };
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const stop = () => setPlayingId(null);
+    audio.addEventListener("ended", stop);
+    return () => audio.removeEventListener("ended", stop);
+  }, []);
 
   const handleRemaster = async (jobId: string) => {
     setRemastering(jobId);
@@ -78,6 +108,27 @@ export default function SongLibrary({ refreshKey, onSelect, onReuse, onRemaster 
             >
               <button
                 type="button"
+                onClick={() => togglePlay(song)}
+                aria-label={playingId === song.job_id ? "Pause" : "Play"}
+                title={playingId === song.job_id ? "Pause" : "Play"}
+                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition ${
+                  playingId === song.job_id
+                    ? "bg-emerald-500 text-white"
+                    : "border border-emerald-500/60 text-emerald-300 hover:bg-emerald-500/20"
+                }`}
+              >
+                {playingId === song.job_id ? (
+                  <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4">
+                    <path d="M6 4h4v16H6zM14 4h4v16h-4z" />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4 translate-x-0.5">
+                    <path d="M8 5v14l11-7z" />
+                  </svg>
+                )}
+              </button>
+              <button
+                type="button"
                 onClick={() => onSelect(song.audio_url)}
                 className="min-w-0 flex-1 text-left"
                 title="Load into player"
@@ -116,6 +167,8 @@ export default function SongLibrary({ refreshKey, onSelect, onReuse, onRemaster 
           ))}
         </ul>
       )}
+
+      <audio ref={audioRef} className="hidden" />
     </div>
   );
 }
