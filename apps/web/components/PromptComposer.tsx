@@ -50,6 +50,14 @@ export default function PromptComposer() {
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [waveform, setWaveform] = useState<number[]>([]);
   const [references, setReferences] = useState<string[]>([]);
+  const [suno, setSuno] = useState<{ enabled: boolean; functions: string[] } | null>(null);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/suno/enabled`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => data && setSuno(data))
+      .catch(() => setSuno(null));
+  }, []);
 
   const toggleInstrument = (instrument: string) => {
     setInstruments((prev) =>
@@ -285,6 +293,16 @@ export default function PromptComposer() {
             </button>
 
             <span className="text-xs text-slate-400">Phonetic assist enabled</span>
+            <span
+              className={`rounded-full border px-2 py-0.5 text-xs ${
+                suno?.enabled
+                  ? "border-emerald-500/50 text-emerald-300"
+                  : "border-slate-700 text-slate-400"
+              }`}
+              title={suno?.enabled ? `Enabled: ${suno.functions.join(", ")}` : "Set SUNO_API_KEY on the API to enable"}
+            >
+              {suno?.enabled ? `Suno: ${suno.functions.length} functions on` : "Suno: local engine"}
+            </span>
           </div>
 
           {jobId && (
