@@ -1,7 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import AudioPlayer from "@/components/AudioPlayer";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 const genreOptions = [
   "mugithi",
@@ -27,6 +29,8 @@ export default function PromptComposer() {
   const [instruments, setInstruments] = useState(["acoustic guitar", "bass"]);
   const [loading, setLoading] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
+  const [jobStatus, setJobStatus] = useState<string | null>(null);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
 
   const toggleInstrument = (instrument: string) => {
     setInstruments((prev) =>
@@ -36,10 +40,42 @@ export default function PromptComposer() {
     );
   };
 
+  useEffect(() => {
+    if (!jobId) return;
+
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/jobs/${jobId}`);
+        if (!response.ok) return;
+        const data = await response.json();
+        if (cancelled) return;
+        setJobStatus(data.status ?? null);
+        if (data.status === "completed" && data.audio_url) {
+          setAudioUrl(data.audio_url);
+          window.clearInterval(timer);
+        } else if (data.status === "failed") {
+          window.clearInterval(timer);
+        }
+      } catch (error) {
+        console.error("Job status poll failed", error);
+      }
+    };
+
+    const timer = window.setInterval(poll, 3000);
+    poll();
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [jobId]);
+
   const handleGenerate = async () => {
     setLoading(true);
+    setAudioUrl(null);
+    setJobStatus("queued");
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"}/generate-song`, {
+      const response = await fetch(`${API_BASE}/generate-song`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -55,8 +91,10 @@ export default function PromptComposer() {
 
       const data = await response.json();
       setJobId(data.job_id ?? null);
+      setJobStatus(data.status ?? "queued");
     } catch (error) {
       console.error("Generation request failed", error);
+      setJobStatus("failed");
     } finally {
       setLoading(false);
     }
@@ -179,7 +217,10 @@ export default function PromptComposer() {
 
           {jobId && (
             <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-200">
-              Job queued: {jobId}
+              Job {jobId}: {jobStatus ?? "queued"}
+              {jobStatus !== "completed" && jobStatus !== "failed" && (
+                <span className="ml-2 text-emerald-300/70">rendering audio output...</span>
+              )}
             </div>
           )}
         </div>
@@ -187,8 +228,8 @@ export default function PromptComposer() {
 
       <aside className="space-y-6">
         <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
-          <h2 className="mb-4 text-xl font-semibold text-white">Audio Preview</h2>
-          <AudioPlayer src="https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" />
+          <h2 className="mb-4 text-xl font-semibold text-white">Audio Output</h2>
+          <AudioPlayer src={audioUrl} />
         </div>
 
         <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
