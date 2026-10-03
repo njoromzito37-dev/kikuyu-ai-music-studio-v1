@@ -4,21 +4,22 @@ A Suno-style AI music generation platform for Gĩkũyũ language and Kenyan musi
 
 ## Features
 
-- Prompt-based song generation
+- Prompt-based song generation (Suno AI when `SUNO_API_KEY` is set, local Mũgithi engine otherwise)
+- Full Suno function set via `/suno/*`: generate, lyrics, extend, cover, upload-extend/cover, add-vocals/instrumental, stems, convert-wav, timestamped lyrics, concat, mashup, persona, boost-style, status, quota
 - Gĩkũyũ, Swahili, and English lyric support
 - Genre presets for Mugithi, Gospel/Kĩrooko, Benga, Mwomboko, Afro-pop, and Acoustic Folk
-- FastAPI backend with async Celery generation jobs
+- On-device audio synthesis engine referencing the Mugithi canon (Karplus-Strong guitar, bass, percussion, tempo switch)
+- FastAPI backend with async generation jobs
 - Django REST API option with account-owned songs, genre catalog, and Celery audio generation
-- Next.js + Tailwind frontend
+- Next.js + Tailwind frontend with audio playback, waveform, and style references
 - PostgreSQL-ready schemas for users, songs, and generation metadata
-- Audio preview and waveform-style visualizer
 
 ## Tech stack
 
 - Frontend: Next.js, Tailwind CSS, Web Audio API
-- Backend: FastAPI, Celery, Redis
+- Backend: FastAPI, Suno API client, local synthesis engine (NumPy), Celery, Redis
 - Database: PostgreSQL / Prisma / Supabase-ready
-- AI: PyTorch, Hugging Face Transformers, Torchaudio, GPU inference
+- AI: Suno API, or local Mugithi-experience engine
 
 ## Project structure
 
@@ -26,7 +27,9 @@ A Suno-style AI music generation platform for Gĩkũyũ language and Kenyan musi
 .
 ├── apps/
 │   ├── api/
-│   │   ├── main.py
+│   │   ├── main.py              # FastAPI: generation, jobs, /suno/* endpoints
+│   │   ├── mugithi_engine.py    # Local synthesis engine + Mugithi reference KB
+│   │   ├── suno_client.py       # Full Suno API client (all functions)
 │   │   ├── manage.py
 │   │   ├── requirements.txt
 │   │   ├── config/
@@ -35,16 +38,13 @@ A Suno-style AI music generation platform for Gĩkũyũ language and Kenyan musi
 │   │       ├── serializers.py
 │   │       ├── tasks.py
 │   │       └── services/prompt_engine.py
-│   ├── web/
-│   │   ├── app/
-│   │   ├── components/
-│   │   ├── package.json
-│   │   ├── postcss.config.js
-│   │   ├── tailwind.config.ts
-│   │   └── tsconfig.json
-│   └── worker/
-│       ├── tasks.py
-│       └── requirements.txt
+│   └── web/
+│       ├── app/
+│       ├── components/
+│       ├── package.json
+│       ├── postcss.config.js
+│       ├── tailwind.config.ts
+│       └── tsconfig.json
 ├── prisma/
 │   └── schema.prisma
 ├── docker-compose.yml

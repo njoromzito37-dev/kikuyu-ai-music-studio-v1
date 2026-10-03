@@ -46,6 +46,8 @@ class GenerateSongSerializer(serializers.Serializer):
         prompt = validated_data.pop("prompt")
         lyrics = validated_data.pop("lyrics", "")
         genre = validated_data["genre"]
+        if not validated_data.get("title"):
+            validated_data["title"] = prompt[:80] or "Untitled Song"
         composition = KikuyuPromptEngine().compose(
             text_prompt=prompt,
             genre=genre,
