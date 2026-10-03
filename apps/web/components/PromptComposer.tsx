@@ -40,12 +40,17 @@ export default function PromptComposer() {
   const [references, setReferences] = useState<string[]>([]);
   const [suno, setSuno] = useState<{ enabled: boolean; functions: string[] } | null>(null);
   const [libraryRefresh, setLibraryRefresh] = useState(0);
+  const [instrumentCatalog, setInstrumentCatalog] = useState<{ slug: string; name: string; category: string }[]>([]);
 
   useEffect(() => {
     fetch(`${API_BASE}/suno/enabled`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => data && setSuno(data))
       .catch(() => setSuno(null));
+    fetch(`${API_BASE}/instruments`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => data && setInstrumentCatalog(data.instruments ?? []))
+      .catch(() => setInstrumentCatalog([]));
   }, []);
 
   const toggleInstrument = (instrument: string) => {
@@ -262,29 +267,35 @@ export default function PromptComposer() {
 
           <div>
             <label className="mb-2 block text-sm text-slate-300">Instruments</label>
-            <div className="flex flex-wrap gap-2">
-              {[
-                "acoustic guitar",
-                "bass",
-                "djembe",
-                "keyboard",
-                "marimba",
-                "choir",
-              ].map((instrument) => (
-                <button
-                  key={instrument}
-                  type="button"
-                  onClick={() => toggleInstrument(instrument)}
-                  className={`rounded-full border px-3 py-2 text-sm transition ${
-                    instruments.includes(instrument)
-                      ? "border-cyan-500 bg-cyan-500/20 text-cyan-200"
-                      : "border-slate-700 bg-slate-950 text-slate-300 hover:border-slate-500"
-                  }`}
-                >
-                  {instrument}
-                </button>
-              ))}
-            </div>
+            {instrumentCatalog.length === 0 ? (
+              <p className="text-sm text-slate-500">Loading instruments...</p>
+            ) : (
+              ["traditional", "modern"].map((category) => {
+                const items = instrumentCatalog.filter((item) => item.category === category);
+                if (items.length === 0) return null;
+                return (
+                  <div key={category} className="mb-3">
+                    <p className="mb-1.5 text-xs uppercase tracking-[0.15em] text-slate-500">{category}</p>
+                    <div className="flex flex-wrap gap-2">
+                      {items.map((instrument) => (
+                        <button
+                          key={instrument.slug}
+                          type="button"
+                          onClick={() => toggleInstrument(instrument.slug)}
+                          className={`rounded-full border px-3 py-2 text-sm transition ${
+                            instruments.includes(instrument.slug)
+                              ? "border-cyan-500 bg-cyan-500/20 text-cyan-200"
+                              : "border-slate-700 bg-slate-950 text-slate-300 hover:border-slate-500"
+                          }`}
+                        >
+                          {instrument.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
 
           <div>

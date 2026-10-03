@@ -162,6 +162,155 @@ def _place(mix: np.ndarray, sig: np.ndarray, offset_s: float, gain: float) -> No
 
 
 # ---------------------------------------------------------------------------
+# Full instrument provision - every instrument in the style catalog can be
+# synthesized and layered into the arrangement.
+# ---------------------------------------------------------------------------
+
+INSTRUMENT_CATALOG = {
+    # Traditional
+    "wandĩndĩ": {"name": "Wandĩndĩ (single-string fiddle)", "category": "traditional"},
+    "kĩgamba": {"name": "Kĩgamba (leg rattles)", "category": "traditional"},
+    "coro": {"name": "Coro (horn)", "category": "traditional"},
+    "ndũmũ": {"name": "Ndũmũ (flute)", "category": "traditional"},
+    "mũgũgũmũ": {"name": "Mũgũgũmũ (percussion drum)", "category": "traditional"},
+    # Modern
+    "acoustic guitar": {"name": "Acoustic Guitar", "category": "modern"},
+    "electric guitar": {"name": "Electric Guitar", "category": "modern"},
+    "bass": {"name": "Bass", "category": "modern"},
+    "accordion": {"name": "Accordion", "category": "modern"},
+    "keyboard": {"name": "Keyboard", "category": "modern"},
+    "synthesizers": {"name": "Synthesizers", "category": "modern"},
+    "brass section": {"name": "Brass Section", "category": "modern"},
+    "drum kit": {"name": "Drum Kit", "category": "modern"},
+    "djembe": {"name": "Djembe", "category": "modern"},
+    "marimba": {"name": "Marimba", "category": "modern"},
+    "choir": {"name": "Choir", "category": "modern"},
+}
+
+
+def _saw(freq: float, dur: float, gain_env: bool = True) -> np.ndarray:
+    """Bright sawtooth voice for reeds/accordion/brass."""
+    n = int(SAMPLE_RATE * dur)
+    if n <= 0:
+        return np.zeros(0, dtype=np.float32)
+    t = np.arange(n) / SAMPLE_RATE
+    sig = np.zeros(n)
+    for h in range(1, 10):
+        sig += (1.0 / h) * np.sin(2 * np.pi * freq * h * t)
+    if gain_env:
+        sig *= np.exp(-t / max(dur * 0.7, 0.05))
+    peak = float(np.max(np.abs(sig))) or 1.0
+    return (sig / peak * 0.5).astype(np.float32)
+
+
+def _flute(freq: float, dur: float) -> np.ndarray:
+    """Airy flute: sine + soft breath noise."""
+    n = int(SAMPLE_RATE * dur)
+    if n <= 0:
+        return np.zeros(0, dtype=np.float32)
+    t = np.arange(n) / SAMPLE_RATE
+    tone = np.sin(2 * np.pi * freq * t) + 0.3 * np.sin(2 * np.pi * freq * 2 * t)
+    rng = np.random.default_rng(int(freq) % (2**32))
+    breath = rng.standard_normal(n) * 0.03
+    env = np.minimum(1.0, np.arange(n) / (0.05 * SAMPLE_RATE))
+    release = max(1, int(0.1 * SAMPLE_RATE))
+    env[-release:] *= np.linspace(1.0, 0.0, release)
+    out = (tone * 0.5 + breath) * env
+    peak = float(np.max(np.abs(out))) or 1.0
+    return (out / peak * 0.4).astype(np.float32)
+
+
+def _horn(freq: float, dur: float) -> np.ndarray:
+    """Resonant horn/coro call: strong fundamental + 2nd harmonic swell."""
+    n = int(SAMPLE_RATE * dur)
+    if n <= 0:
+        return np.zeros(0, dtype=np.float32)
+    t = np.arange(n) / SAMPLE_RATE
+    swell = np.minimum(1.0, np.arange(n) / (0.12 * SAMPLE_RATE)) * np.exp(-t / max(dur * 0.8, 0.1))
+    sig = np.sin(2 * np.pi * freq * t) + 0.5 * np.sin(2 * np.pi * freq * 2 * t) + 0.25 * np.sin(2 * np.pi * freq * 3 * t)
+    out = sig * swell
+    peak = float(np.max(np.abs(out))) or 1.0
+    return (out / peak * 0.5).astype(np.float32)
+
+
+def _marimba(freq: float, dur: float) -> np.ndarray:
+    """Marimba: mallet attack with fast-decaying resonant tone."""
+    n = int(SAMPLE_RATE * dur)
+    if n <= 0:
+        return np.zeros(0, dtype=np.float32)
+    t = np.arange(n) / SAMPLE_RATE
+    sig = np.sin(2 * np.pi * freq * t) + 0.4 * np.sin(2 * np.pi * freq * 4 * t)
+    env = np.exp(-t / max(dur * 0.35, 0.03))
+    out = sig * env
+    peak = float(np.max(np.abs(out))) or 1.0
+    return (out / peak * 0.45).astype(np.float32)
+
+
+def _drum_hit(dur: float = 0.12, pitch: float = 70.0) -> np.ndarray:
+    """Low drum (mũgũgũmũ / djembe body)."""
+    n = int(SAMPLE_RATE * dur)
+    t = np.arange(n) / SAMPLE_RATE
+    sweep = pitch * np.exp(-t * 18) + 40
+    sig = np.sin(2 * np.pi * np.cumsum(sweep) / SAMPLE_RATE)
+    return (sig * np.exp(-t * 15) * 0.8).astype(np.float32)
+
+
+def _rattle(dur: float = 0.08) -> np.ndarray:
+    """Kĩgamba rattle: cluster of short noise bursts."""
+    n = int(SAMPLE_RATE * dur)
+    rng = np.random.default_rng(5)
+    sig = np.zeros(n)
+    for burst in range(0, n, max(1, n // 5)):
+        end = min(n, burst + int(0.02 * SAMPLE_RATE))
+        sig[burst:end] = rng.standard_normal(end - burst)
+    sig = np.diff(sig, prepend=0.0)
+    t = np.arange(n) / SAMPLE_RATE
+    return (sig * np.exp(-t * 30) * 0.5).astype(np.float32)
+
+
+def _layer_instruments(mix: np.ndarray, instruments: list, key_root: str, progression: list, sections: list, bpm: float, rng) -> None:
+    """Layer each selected instrument into the arrangement per its role."""
+    base = _midi(key_root, 4)
+    kick, shaker = _kick(), _shaker()
+    t = 0.0
+    for section, bars, sec_bpm in sections:
+        beat = 60 / sec_bpm
+        section_start = t
+        for bar in range(bars):
+            degree, quality = progression[bar % len(progression)]
+            chord = _chord_midis(key_root, degree, quality, 3)
+            bar_start = t
+            for inst in instruments:
+                slug = inst.strip().lower()
+                if slug in ("kĩgamba",):
+                    for b in range(4):
+                        _place(mix, _rattle(), bar_start + b * beat, 0.5)
+                elif slug in ("mũgũgũmũ", "djembe"):
+                    _place(mix, _drum_hit(), bar_start, 0.6)
+                    _place(mix, _drum_hit(0.1, 90.0), bar_start + 2 * beat, 0.5)
+                elif slug in ("ndũmũ", "flute") and section in ("verse", "chorus"):
+                    note = base + PENTATONIC[rng.integers(0, len(PENTATONIC))]
+                    _place(mix, _flute(_freq(note), beat * 2), bar_start + bar * 0, 0.4)
+                elif slug == "coro" and section in ("intro", "chorus"):
+                    _place(mix, _horn(_freq(base), beat * 1.5), bar_start, 0.4)
+                elif slug in ("wandĩndĩ", "fiddle") and section in ("verse", "chorus"):
+                    note = base + 12 + PENTATONIC[rng.integers(0, len(PENTATONIC))]
+                    _place(mix, _ks_pluck(_freq(note), beat, brightness=0.9), bar_start + beat, 0.35)
+                elif slug in ("accordion", "keyboard", "synthesizers", "brass section") and section != "intro":
+                    for m in chord:
+                        _place(mix, _saw(_freq(m + 12), beat * 1.8), bar_start, 0.12)
+                elif slug == "marimba" and section in ("verse", "chorus"):
+                    for b in range(4):
+                        note = base + PENTATONIC[(bar + b) % len(PENTATONIC)]
+                        _place(mix, _marimba(_freq(note + 12), beat * 0.9), bar_start + b * beat, 0.2)
+                elif slug == "drum kit" and section != "intro":
+                    for b in range(4):
+                        _place(mix, kick, bar_start + b * beat, 0.4)
+                        _place(mix, shaker, bar_start + b * beat + beat / 2, 0.3)
+            t = bar_start + 4 * beat
+
+
+# ---------------------------------------------------------------------------
 # Arrangement + rendering
 # ---------------------------------------------------------------------------
 
@@ -348,6 +497,9 @@ def render_song(payload: dict, out_dir: str, stem: str, remaster: bool = False) 
 
     # Sing the lyrics over the sung sections
     _place_vocals(mix, key_root, lyrics, section_times, bpm, rng)
+
+    # Layer every selected instrument
+    _layer_instruments(mix, payload.get("instruments") or [], key_root, progression, sections, bpm, rng)
 
     # gentle master: soft clip + normalize
     mix = np.tanh(mix)

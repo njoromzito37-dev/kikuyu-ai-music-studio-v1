@@ -7,7 +7,7 @@ import os
 import time
 import uuid
 
-from mugithi_engine import reference_notes, render_song
+from mugithi_engine import INSTRUMENT_CATALOG, reference_notes, render_song
 from suno_client import SUNO_FUNCTIONS, SunoClient, SunoError
 
 app = FastAPI(title="Kikuyu AI Music Studio API", version="0.1.0")
@@ -230,6 +230,17 @@ def _suno() -> SunoClient:
             detail="Suno is not configured. Set SUNO_API_KEY (and optionally SUNO_API_BASE) to enable all Suno functions.",
         )
     return client
+
+
+@app.get("/instruments")
+def list_instruments():
+    """Full instrument provision for the style - every selectable instrument."""
+    return {
+        "instruments": [
+            {"slug": slug, "name": meta["name"], "category": meta["category"]}
+            for slug, meta in INSTRUMENT_CATALOG.items()
+        ]
+    }
 
 
 @app.get("/suno/enabled")
