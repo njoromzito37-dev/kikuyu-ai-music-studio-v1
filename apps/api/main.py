@@ -50,6 +50,7 @@ jobs: Dict[str, dict] = {}
 class GenerateSongRequest(BaseModel):
     prompt: str = Field(..., description="Natural language prompt.")
     topic: Optional[str] = Field(default="", description="Song topic used to generate lyrics when lyrics are omitted.")
+    style_prompt: Optional[str] = Field(default="", description="Optional composed style prompt to steer generation.")
     lyrics: Optional[str] = Field(default="", description="Song lyrics. Auto-generated from the topic when omitted.")
     language: str = Field(default="gikuyu", description="Language of the lyrics")
     genre: str = Field(default="mugithi", description="Desired music genre")
@@ -95,6 +96,57 @@ def health():
     return {"status": "ok"}
 
 
+def _build_style_prompt(genre: str, mood: str, instruments: List[str], language: str, topic: str) -> str:
+    """Compose a rich style prompt from the Mugithi reference experience."""
+    style = reference_notes(genre)
+    groove = style[1].split(": ", 1)[-1] if len(style) > 1 else "driving East African groove"
+    structure = style[2].split(": ", 1)[-1] if len(style) > 2 else ""
+    names = ", ".join(instruments[:6]) if instruments else "acoustic guitar, bass"
+    parts = [
+        f"{genre.replace('-', ' ').title()} in {language}",
+        f"{mood} mood",
+        f"groove: {groove}",
+        f"instrumentation: {names}",
+    ]
+    if structure:
+        parts.append(f"structure: {structure}")
+    if topic:
+        parts.append(f"theme: {topic}")
+    return ". ".join(parts) + "."
+
+
+class StylePromptRequest(BaseModel):
+    genre: str = Field(default="mugithi")
+    mood: str = Field(default="joyful")
+    instruments: Optional[List[str]] = None
+    language: str = Field(default="gikuyu")
+    topic: Optional[str] = ""
+    use_suno: bool = Field(default=False, description="Self-generate an enhanced style via Suno boost.")
+
+
+class StylePromptResponse(BaseModel):
+    style_prompt: str
+    engine: str
+
+
+@app.post("/style-prompt", response_model=StylePromptResponse)
+def style_prompt(req: StylePromptRequest):
+    """Compose a style prompt locally, or self-generate an enhanced one via Suno."""
+    base = _build_style_prompt(req.genre, req.mood, req.instruments or [], req.language, req.topic or "")
+    if req.use_suno:
+        client = SunoClient.from_env()
+        if client:
+            try:
+                boosted = client.boost_style(base)
+                text = boosted.get("result") or boosted.get("content") or boosted.get("style") if isinstance(boosted, dict) else None
+                if text:
+                    return StylePromptResponse(style_prompt=text, engine="suno")
+            except SunoError:
+                pass
+        return StylePromptResponse(style_prompt=base, engine="local")
+    return StylePromptResponse(style_prompt=base, engine="local")
+
+
 @app.post("/generate-lyrics", response_model=GenerateLyricsResponse)
 def generate_lyrics(req: GenerateLyricsRequest):
     if not req.topic.strip():
@@ -129,6 +181,7 @@ def generate_song(req: GenerateSongRequest, background_tasks: BackgroundTasks):
         "mood": req.mood,
         "instruments": req.instruments,
         "duration_sec": req.duration_sec,
+        "style_prompt": (req.style_prompt or "").strip(),
     }
 
     # In production, this would publish to Celery / Redis.
@@ -190,8 +243,10 @@ def _render_job(job_id: str, remaster: bool = False) -> None:
 def _render_job_suno(job, suno: SunoClient) -> None:
     """Submit the song to Suno in custom mode and poll until audio is ready."""
     payload = job["payload"]
-    style = f"{payload['genre']}, {payload['mood']}, Kikuyu East African, " + ", ".join(
-        r.split(": ", 1)[-1] for r in job["references"][:2]
+    style = payload.get("style_prompt") or (
+        f"{payload['genre']}, {payload['mood']}, Kikuyu East African, " + ", ".join(
+            r.split(": ", 1)[-1] for r in job["references"][:2]
+        )
     )
     title = payload["prompt"][:80]
     result = suno.generate_custom(prompt=payload["lyrics"], style=style, title=title)

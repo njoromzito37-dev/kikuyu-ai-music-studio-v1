@@ -33,6 +33,9 @@ export default function PromptComposer() {
   const [instruments, setInstruments] = useState(["acoustic guitar", "bass"]);
   const [loading, setLoading] = useState(false);
   const [lyricsLoading, setLyricsLoading] = useState(false);
+  const [styleLoading, setStyleLoading] = useState(false);
+  const [stylePrompt, setStylePrompt] = useState("");
+  const [useSunoStyle, setUseSunoStyle] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<string | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
@@ -125,6 +128,26 @@ export default function PromptComposer() {
     }
   };
 
+  const handleStylePrompt = async () => {
+    setStyleLoading(true);
+    try {
+      const response = await fetch(`${API_BASE}/style-prompt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ genre, mood, instruments, language, topic: topic.trim() || prompt.trim(), use_suno: useSunoStyle }),
+      });
+      if (!response.ok) throw new Error(`Style prompt failed: ${response.status}`);
+      const data = await response.json();
+      if (data.style_prompt) {
+        setStylePrompt(data.style_prompt);
+      }
+    } catch (error) {
+      console.error("Style prompt failed", error);
+    } finally {
+      setStyleLoading(false);
+    }
+  };
+
   const handleGenerate = async () => {
     setLoading(true);
     setAudioUrl(null);
@@ -136,6 +159,7 @@ export default function PromptComposer() {
         body: JSON.stringify({
           prompt,
           topic,
+          style_prompt: stylePrompt || undefined,
           lyrics,
           language,
           genre,
@@ -212,6 +236,39 @@ export default function PromptComposer() {
               onChange={(e) => setTopic(e.target.value)}
               placeholder="What the song is about, e.g. Wendo wa mũtũranĩri"
               className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none ring-0 transition focus:border-emerald-500"
+            />
+          </div>
+
+          <div>
+            <div className="mb-2 flex items-center justify-between">
+              <label className="block text-sm text-slate-300">Style Prompt</label>
+              <div className="flex items-center gap-3">
+                <label className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-400" title="Self-generate an enhanced style via Suno">
+                  <input
+                    type="checkbox"
+                    checked={useSunoStyle}
+                    onChange={(e) => setUseSunoStyle(e.target.checked)}
+                    className="h-3.5 w-3.5 accent-emerald-500"
+                  />
+                  Self-generate
+                </label>
+                <button
+                  type="button"
+                  onClick={handleStylePrompt}
+                  disabled={styleLoading}
+                  className="rounded-full border border-emerald-500/50 px-3 py-1 text-xs text-emerald-300 transition hover:border-emerald-400 hover:text-emerald-200 disabled:cursor-not-allowed disabled:opacity-50"
+                  title="Compose a style prompt from the genre, mood, and instruments"
+                >
+                  {styleLoading ? "Building..." : "Style Prompt"}
+                </button>
+              </div>
+            </div>
+            <textarea
+              rows={3}
+              value={stylePrompt}
+              onChange={(e) => setStylePrompt(e.target.value)}
+              placeholder="Build a style prompt, or type your own..."
+              className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition focus:border-emerald-500"
             />
           </div>
 
