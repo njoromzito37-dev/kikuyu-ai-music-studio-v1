@@ -3,7 +3,23 @@
 import { useEffect, useState } from "react";
 import AudioPlayer from "@/components/AudioPlayer";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+// Resolve the API base from the current page so port-forwarded previews
+// (e.g. Codespaces) hit the forwarded API origin, with an env var override.
+const resolveApiBase = () => {
+  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+  if (typeof window !== "undefined") {
+    const url = new URL(window.location.origin);
+    if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
+      return `${url.protocol}//${url.hostname}:8000`;
+    }
+    // Forwarded hosts look like "<name>-3000.<domain>"; swap the port segment.
+    url.hostname = url.hostname.replace(/-3000(?=\.)/, "-8000");
+    return url.origin;
+  }
+  return "http://localhost:8000";
+};
+
+const API_BASE = resolveApiBase();
 
 const genreOptions = [
   "mugithi",
