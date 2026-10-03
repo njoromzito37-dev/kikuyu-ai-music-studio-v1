@@ -16,3 +16,4 @@ npm-debug.log*
 /build/
 coverage/
 *.sqlite3
+apps/api/generated/

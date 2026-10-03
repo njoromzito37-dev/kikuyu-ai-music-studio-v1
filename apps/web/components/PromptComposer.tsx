@@ -48,6 +48,8 @@ export default function PromptComposer() {
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<string | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [waveform, setWaveform] = useState<number[]>([]);
+  const [references, setReferences] = useState<string[]>([]);
 
   const toggleInstrument = (instrument: string) => {
     setInstruments((prev) =>
@@ -71,8 +73,13 @@ export default function PromptComposer() {
         if (data.lyrics) {
           setLyrics((prev) => (prev.trim() ? prev : data.lyrics));
         }
+        if (Array.isArray(data.references) && data.references.length > 0) {
+          setReferences(data.references);
+        }
         if (data.status === "completed" && data.audio_url) {
-          setAudioUrl(data.audio_url);
+          const url = data.audio_url.startsWith("/") ? `${API_BASE}${data.audio_url}` : data.audio_url;
+          setAudioUrl(url);
+          setWaveform(Array.isArray(data.waveform) ? data.waveform : []);
           window.clearInterval(timer);
         } else if (data.status === "failed") {
           window.clearInterval(timer);
@@ -103,6 +110,9 @@ export default function PromptComposer() {
       const data = await response.json();
       if (data.lyrics) {
         setLyrics(data.lyrics);
+      }
+      if (Array.isArray(data.references)) {
+        setReferences(data.references);
       }
     } catch (error) {
       console.error("Lyrics generation failed", error);
@@ -252,6 +262,16 @@ export default function PromptComposer() {
               className="w-full rounded-2xl border border-slate-700 bg-slate-950 p-4 text-white outline-none focus:border-emerald-500"
               placeholder="Type lyrics in Gĩkũyũ, Swahili, or English..."
             />
+            {references.length > 0 && (
+              <div className="mt-2 rounded-xl border border-slate-700/60 bg-slate-950/60 p-3">
+                <p className="mb-1 text-xs uppercase tracking-[0.15em] text-slate-400">Mũgithi style references</p>
+                <ul className="space-y-1 text-xs text-slate-300">
+                  {references.map((ref) => (
+                    <li key={ref}>• {ref}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
 
           <div className="flex items-center justify-between gap-3">
@@ -281,7 +301,7 @@ export default function PromptComposer() {
       <aside className="space-y-6">
         <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
           <h2 className="mb-4 text-xl font-semibold text-white">Audio Output</h2>
-          <AudioPlayer src={audioUrl} />
+          <AudioPlayer src={audioUrl} waveform={waveform} />
         </div>
 
         <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">

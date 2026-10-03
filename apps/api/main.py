@@ -1,10 +1,12 @@
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from typing import Dict, List, Optional
 import os
-import time
 import uuid
+
+from mugithi_engine import reference_notes, render_song
 
 app = FastAPI(title="Kikuyu AI Music Studio API", version="0.1.0")
 
@@ -16,8 +18,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Demo audio used to simulate a finished render until the worker pipeline is wired in.
-DEMO_AUDIO_URL = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3"
+# Rendered songs are written here and served back to the web app.
+GENERATED_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "generated")
+os.makedirs(GENERATED_DIR, exist_ok=True)
+app.mount("/generated", StaticFiles(directory=GENERATED_DIR), name="generated")
 
 # Topic-based lyric templates, kept in sync with music/services/prompt_engine.py.
 LYRIC_TEMPLATES = {
@@ -62,6 +66,7 @@ class GenerateLyricsResponse(BaseModel):
     lyrics: str
     language: str
     topic: str
+    references: List[str] = []
 
 
 class GenerateSongResponse(BaseModel):
@@ -75,6 +80,8 @@ class JobStatusResponse(BaseModel):
     status: str
     audio_url: Optional[str] = None
     lyrics: Optional[str] = None
+    waveform: List[float] = []
+    references: List[str] = []
     detail: str = ""
 
 
@@ -93,6 +100,7 @@ def generate_lyrics(req: GenerateLyricsRequest):
         lyrics=generate_lyrics_from_topic(req.topic, req.language, req.genre),
         language=req.language,
         topic=req.topic,
+        references=reference_notes(req.genre),
     )
 
 
@@ -124,6 +132,8 @@ def generate_song(req: GenerateSongRequest, background_tasks: BackgroundTasks):
         "status": "queued",
         "audio_url": None,
         "lyrics": lyrics,
+        "waveform": [],
+        "references": reference_notes(req.genre),
         "payload": payload,
     }
     background_tasks.add_task(_render_job, job_id)
@@ -135,14 +145,21 @@ def generate_song(req: GenerateSongRequest, background_tasks: BackgroundTasks):
 
 
 def _render_job(job_id: str) -> None:
-    """Simulated render pipeline; replace with worker/Redis result handling."""
+    """Render a real song with the on-device Mugithi-experience engine."""
     job = jobs.get(job_id)
     if job is None:
         return
     job["status"] = "processing"
-    time.sleep(6)
+    try:
+        result = render_song(job["payload"], GENERATED_DIR, job_id)
+    except Exception as exc:
+        job["status"] = "failed"
+        job["detail"] = f"Render failed: {exc}"
+        return
     job["status"] = "completed"
-    job["audio_url"] = DEMO_AUDIO_URL
+    job["audio_url"] = f"/generated/{result['filename']}"
+    job["waveform"] = result["waveform"]
+    job["references"] = result["references"]
 
 
 @app.get("/jobs/{job_id}", response_model=JobStatusResponse)
@@ -155,5 +172,7 @@ def get_job(job_id: str):
         status=job["status"],
         audio_url=job["audio_url"],
         lyrics=job.get("lyrics"),
-        detail="Audio output ready." if job["status"] == "completed" else "Generation in progress.",
+        waveform=job.get("waveform", []),
+        references=job.get("references", []),
+        detail=job.get("detail") or ("Audio output ready." if job["status"] == "completed" else "Generation in progress."),
     )
