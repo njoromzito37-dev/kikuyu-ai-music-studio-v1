@@ -17,3 +17,4 @@ npm-debug.log*
 coverage/
 *.sqlite3
 apps/api/generated/
+*.tsbuildinfo
