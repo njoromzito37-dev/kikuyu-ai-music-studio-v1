@@ -180,7 +180,7 @@ def _lead_phrase(key_root: str, rng, bars: int, octave: int = 5) -> list:
     return notes
 
 
-def render_song(payload: dict, out_dir: str, stem: str) -> dict:
+def render_song(payload: dict, out_dir: str, stem: str, remaster: bool = False) -> dict:
     """Render a real WAV grounded in the Mugithi reference style."""
     genre = (payload.get("genre") or "mugithi").lower()
     bpm = GENRE_BPM.get(genre, 120)
@@ -247,8 +247,14 @@ def render_song(payload: dict, out_dir: str, stem: str) -> dict:
 
     # gentle master: soft clip + normalize
     mix = np.tanh(mix)
+    if remaster:
+        # Remaster: gentle compression, presence lift, louder output.
+        threshold = 0.55
+        over = np.abs(mix) > threshold
+        mix = np.where(over, np.sign(mix) * (threshold + (np.abs(mix) - threshold) * 0.4), mix)
+        mix = mix + 0.15 * np.diff(mix, prepend=mix[0])  # presence / air
     peak = float(np.max(np.abs(mix))) or 1.0
-    mix = (mix / peak * 0.92).astype(np.float32)
+    mix = (mix / peak * (0.98 if remaster else 0.92)).astype(np.float32)
     fade = int(SAMPLE_RATE * 0.8)
     mix[-fade:] *= np.linspace(1.0, 0.0, fade, dtype=np.float32)
 

@@ -146,6 +146,16 @@ def generate_song(req: GenerateSongRequest, background_tasks: BackgroundTasks):
         "title": (req.topic or "").strip() or req.prompt[:60],
         "genre": req.genre,
         "created_at": time.time(),
+        "request": {
+            "prompt": req.prompt,
+            "topic": topic,
+            "lyrics": lyrics,
+            "language": req.language,
+            "genre": req.genre,
+            "mood": req.mood,
+            "instruments": req.instruments or [],
+            "duration_sec": req.duration_sec,
+        },
         "payload": payload,
     }
     background_tasks.add_task(_render_job, job_id)
@@ -156,7 +166,7 @@ def generate_song(req: GenerateSongRequest, background_tasks: BackgroundTasks):
     )
 
 
-def _render_job(job_id: str) -> None:
+def _render_job(job_id: str, remaster: bool = False) -> None:
     """Render via Suno when configured; otherwise the local Mugithi engine."""
     job = jobs.get(job_id)
     if job is None:
@@ -167,7 +177,7 @@ def _render_job(job_id: str) -> None:
         if suno:
             _render_job_suno(job, suno)
             return
-        result = render_song(job["payload"], GENERATED_DIR, job_id)
+        result = render_song(job["payload"], GENERATED_DIR, job_id, remaster=remaster)
         job["status"] = "completed"
         job["audio_url"] = f"/generated/{result['filename']}"
         job["waveform"] = result["waveform"]
@@ -493,6 +503,101 @@ def list_songs(download: Optional[str] = None):
         })
     items.sort(key=lambda item: item["created_at"], reverse=True)
     return {"songs": items}
+
+
+@app.get("/songs/{job_id}")
+def get_song_detail(job_id: str):
+    """Full detail for a song - used to reuse its settings in the composer."""
+    job = jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown job_id.")
+    return {
+        "job_id": job_id,
+        "title": job["title"],
+        "genre": job["genre"],
+        "engine": job["engine"],
+        "status": job["status"],
+        "audio_url": job["audio_url"],
+        "request": job.get("request"),
+    }
+
+
+@app.post("/songs/{job_id}/remaster")
+def remaster_song(job_id: str, background_tasks: BackgroundTasks):
+    """Remaster a song: Suno cover when configured, else a louder local re-render."""
+    job = jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown job_id.")
+    if job["status"] != "completed":
+        raise HTTPException(status_code=409, detail="Song is not ready to remaster.")
+    new_id = str(uuid.uuid4())
+    suno = SunoClient.from_env()
+    jobs[new_id] = {
+        **{k: job.get(k) for k in ("lyrics", "references", "payload", "request", "genre")},
+        "job_id": new_id,
+        "status": "queued",
+        "audio_url": None,
+        "waveform": [],
+        "engine": "suno" if suno else "local",
+        "suno_task_id": None,
+        "title": f"{job['title']} (Remaster)",
+        "created_at": time.time(),
+    }
+    if suno:
+        background_tasks.add_task(_remaster_job_suno, new_id, job)
+    else:
+        background_tasks.add_task(_render_job, new_id, True)
+    return {"job_id": new_id, "status": "queued"}
+
+
+def _remaster_job_suno(new_id: str, source: dict) -> None:
+    """Cover the source clip in Suno as a remaster."""
+    job = jobs.get(new_id)
+    if job is None:
+        return
+    job["status"] = "processing"
+    try:
+        suno = SunoClient.from_env()
+        task_id = source.get("suno_task_id")
+        audio_url = source.get("audio_url") or ""
+        if task_id:
+            info = suno.get_status(task_id)
+            clips = (info.get("response") or {}).get("sunoData") or []
+            audio_id = clips[0].get("id") if clips else None
+            if not audio_id:
+                raise SunoError("Could not resolve source audioId for remaster.")
+            style = f"{job['genre']}, remastered, polished"
+            result = suno.cover(audio_id=audio_id, style=style, title=job["title"])
+            _poll_suno_into_job(job, suno, result.get("taskId"))
+        elif audio_url.startswith("/generated/"):
+            result = suno.upload_cover(upload_url=audio_url, style=f"{job['genre']}, remastered", title=job["title"])
+            _poll_suno_into_job(job, suno, result.get("taskId"))
+        else:
+            raise SunoError("No source audio available to remaster.")
+    except Exception as exc:
+        job["status"] = "failed"
+        job["detail"] = f"Remaster failed: {exc}"
+
+
+def _poll_suno_into_job(job, suno: SunoClient, task_id) -> None:
+    if not task_id:
+        raise SunoError("Suno did not return a taskId.")
+    job["suno_task_id"] = task_id
+    for _ in range(60):
+        time.sleep(5)
+        info = suno.get_status(task_id)
+        status = (info.get("status") or "").upper()
+        if status == "SUCCESS":
+            clips = (info.get("response") or {}).get("sunoData") or []
+            if not clips or not clips[0].get("audioUrl"):
+                raise SunoError("Suno finished without audio output.")
+            job["status"] = "completed"
+            job["audio_url"] = clips[0]["audioUrl"]
+            job["detail"] = "Remastered by Suno AI."
+            return
+        if "FAILED" in status:
+            raise SunoError(f"Suno remaster failed ({status}).")
+    raise SunoError("Suno remaster timed out.")
 
 
 @app.get("/jobs/{job_id}", response_model=JobStatusResponse)

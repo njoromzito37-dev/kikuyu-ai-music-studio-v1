@@ -17,11 +17,23 @@ type LibrarySong = {
 type SongLibraryProps = {
   refreshKey: number;
   onSelect: (audioUrl: string) => void;
+  onReuse: (jobId: string) => void;
+  onRemaster: (jobId: string) => void;
 };
 
-export default function SongLibrary({ refreshKey, onSelect }: SongLibraryProps) {
+export default function SongLibrary({ refreshKey, onSelect, onReuse, onRemaster }: SongLibraryProps) {
   const [songs, setSongs] = useState<LibrarySong[]>([]);
   const [loading, setLoading] = useState(true);
+  const [remastering, setRemastering] = useState<string | null>(null);
+
+  const handleRemaster = async (jobId: string) => {
+    setRemastering(jobId);
+    try {
+      await onRemaster(jobId);
+    } finally {
+      setRemastering(null);
+    }
+  };
 
   const load = useCallback(async () => {
     try {
@@ -74,6 +86,23 @@ export default function SongLibrary({ refreshKey, onSelect }: SongLibraryProps) 
                 <p className="mt-0.5 text-xs capitalize text-slate-400">
                   {song.genre} • {song.engine}
                 </p>
+              </button>
+              <button
+                type="button"
+                onClick={() => onReuse(song.job_id)}
+                className="shrink-0 rounded-full border border-slate-600 px-3 py-1 text-xs text-slate-300 transition hover:border-slate-400"
+                title="Load settings into composer"
+              >
+                Reuse
+              </button>
+              <button
+                type="button"
+                onClick={() => handleRemaster(song.job_id)}
+                disabled={remastering === song.job_id}
+                className="shrink-0 rounded-full border border-cyan-500/50 px-3 py-1 text-xs text-cyan-300 transition hover:border-cyan-400 disabled:opacity-50"
+                title="Remaster this song"
+              >
+                {remastering === song.job_id ? "..." : "Remaster"}
               </button>
               <a
                 href={song.download_url}

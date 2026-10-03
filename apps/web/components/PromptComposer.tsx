@@ -151,6 +151,41 @@ export default function PromptComposer() {
     }
   };
 
+  const handleReuse = async (reuseJobId: string) => {
+    try {
+      const response = await fetch(`${API_BASE}/songs/${reuseJobId}`);
+      if (!response.ok) return;
+      const data = await response.json();
+      const req = data.request;
+      if (!req) return;
+      setPrompt(req.prompt ?? "");
+      setTopic(req.topic ?? "");
+      setLyrics(req.lyrics ?? "");
+      setLanguage(req.language ?? "gikuyu");
+      setGenre(req.genre ?? "mugithi");
+      setMood(req.mood ?? "joyful");
+      setInstruments(Array.isArray(req.instruments) ? req.instruments : []);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (error) {
+      console.error("Reuse failed", error);
+    }
+  };
+
+  const handleRemaster = async (sourceJobId: string) => {
+    try {
+      const response = await fetch(`${API_BASE}/songs/${sourceJobId}/remaster`, { method: "POST" });
+      if (!response.ok) return;
+      const data = await response.json();
+      if (data.job_id) {
+        setJobId(data.job_id);
+        setJobStatus("queued");
+        setAudioUrl(null);
+      }
+    } catch (error) {
+      console.error("Remaster failed", error);
+    }
+  };
+
   return (
     <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
       <section className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6 shadow-glow">
@@ -330,6 +365,8 @@ export default function PromptComposer() {
             setAudioUrl(url);
             setWaveform([]);
           }}
+          onReuse={handleReuse}
+          onRemaster={handleRemaster}
         />
 
         <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
