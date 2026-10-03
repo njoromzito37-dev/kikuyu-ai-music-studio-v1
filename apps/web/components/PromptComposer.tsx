@@ -36,6 +36,7 @@ export default function PromptComposer() {
   const [prompt, setPrompt] = useState(
     "Warm Mugithi love song with acoustic guitar and glowing vocals"
   );
+  const [topic, setTopic] = useState("Wendo wa mũtũranĩri");
   const [lyrics, setLyrics] = useState(
     "Nĩngũtũma wendo waku rũrĩrĩ\nNĩngũgũthaithana na ngoro yaku"
   );
@@ -106,13 +107,14 @@ export default function PromptComposer() {
   }, [jobId]);
 
   const handleGenerateLyrics = async () => {
-    if (!prompt.trim()) return;
+    const subject = topic.trim() || prompt.trim();
+    if (!subject) return;
     setLyricsLoading(true);
     try {
       const response = await fetch(`${API_BASE}/generate-lyrics`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topic: prompt, language, genre, mood }),
+        body: JSON.stringify({ topic: subject, language, genre, mood }),
       });
       if (!response.ok) throw new Error(`Lyrics request failed: ${response.status}`);
       const data = await response.json();
@@ -139,6 +141,7 @@ export default function PromptComposer() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           prompt,
+          topic,
           lyrics,
           language,
           genre,
@@ -169,6 +172,16 @@ export default function PromptComposer() {
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               placeholder="Warm Mugithi love song with acoustic guitar and heartfelt vocals"
+              className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none ring-0 transition focus:border-emerald-500"
+            />
+          </div>
+
+          <div>
+            <label className="mb-2 block text-sm text-slate-300">Topic</label>
+            <input
+              value={topic}
+              onChange={(e) => setTopic(e.target.value)}
+              placeholder="What the song is about, e.g. Wendo wa mũtũranĩri"
               className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none ring-0 transition focus:border-emerald-500"
             />
           </div>
@@ -256,9 +269,9 @@ export default function PromptComposer() {
               <button
                 type="button"
                 onClick={handleGenerateLyrics}
-                disabled={lyricsLoading || !prompt.trim()}
+                disabled={lyricsLoading || (!topic.trim() && !prompt.trim())}
                 className="rounded-full border border-cyan-500/50 px-3 py-1 text-xs text-cyan-300 transition hover:border-cyan-400 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
-                title="Generate lyrics from the prompt topic"
+                title="Generate lyrics from the topic"
               >
                 {lyricsLoading ? "Writing lyrics..." : "Generate from topic"}
               </button>

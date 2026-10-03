@@ -49,6 +49,7 @@ jobs: Dict[str, dict] = {}
 
 class GenerateSongRequest(BaseModel):
     prompt: str = Field(..., description="Natural language prompt.")
+    topic: Optional[str] = Field(default="", description="Song topic used to generate lyrics when lyrics are omitted.")
     lyrics: Optional[str] = Field(default="", description="Song lyrics. Auto-generated from the topic when omitted.")
     language: str = Field(default="gikuyu", description="Language of the lyrics")
     genre: str = Field(default="mugithi", description="Desired music genre")
@@ -116,10 +117,12 @@ def generate_song(req: GenerateSongRequest, background_tasks: BackgroundTasks):
         raise HTTPException(status_code=400, detail="Unsupported language.")
 
     job_id = str(uuid.uuid4())
-    lyrics = (req.lyrics or "").strip() or generate_lyrics_from_topic(req.prompt, req.language, req.genre)
+    topic = (req.topic or "").strip() or req.prompt
+    lyrics = (req.lyrics or "").strip() or generate_lyrics_from_topic(topic, req.language, req.genre)
     payload = {
         "job_id": job_id,
         "prompt": req.prompt,
+        "topic": topic,
         "lyrics": lyrics,
         "language": req.language,
         "genre": req.genre,
