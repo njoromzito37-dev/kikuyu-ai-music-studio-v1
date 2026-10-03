@@ -157,6 +157,70 @@ def style_prompt(req: StylePromptRequest):
     return StylePromptResponse(style_prompt=base, engine="local")
 
 
+class ChoralVocalRequest(BaseModel):
+    topic: str = Field(..., description="Song topic, e.g. 'Kũrathima bũrũri'.")
+    lyrics_snippet: str = Field(default="", description="Gĩkũyũ lyric lines to feature.")
+    tempo_bpm: int = Field(default=115, ge=30, le=300)
+    generate: bool = Field(default=False, description="Also queue a real generation job.")
+
+
+@app.post("/generate-choral-mugithi")
+def generate_choral_mugithi(req: ChoralVocalRequest, background_tasks: BackgroundTasks):
+    """Compose a generation config optimized for male choir, call-and-response
+    dynamics, and Gĩkũyũ pronunciation; optionally kick off a real render."""
+    style_prompt = (
+        "Traditional Gĩkũyũ Mugithi, "
+        "Lead soloist with powerful male choir response (call-and-response), "
+        "Harmonized male choral backing, "
+        "Flawless Gĩkũyũ language pronunciation and phonetic diacritics, "
+        "Acoustic guitar and percussive rhythm, "
+        f"Tempo: {req.tempo_bpm} BPM."
+    )
+    config = {
+        "prompt": style_prompt,
+        "lyrics": req.lyrics_snippet,
+        "tags": ["male choir", "call and response", "mugithi", "gikuyu vocal style"],
+        "instrumental": False,
+    }
+    result = {"status": "success", "generation_config": config}
+
+    if req.generate:
+        job_id = str(uuid.uuid4())
+        lyrics = req.lyrics_snippet.strip() or generate_lyrics_from_topic(req.topic, "gikuyu", "mugithi")
+        payload = {
+            "job_id": job_id,
+            "prompt": style_prompt,
+            "topic": req.topic,
+            "lyrics": lyrics,
+            "language": "gikuyu",
+            "genre": "mugithi",
+            "mood": "joyful",
+            "instruments": ["acoustic guitar", "bass", "choir", "drum kit"],
+            "duration_sec": 120,
+            "style_prompt": style_prompt,
+            "vocal_dynamics": "powerful male choir call-and-response, harmonized choral backing",
+            "percussion_pattern": "steady kick, crisp snare, percussive rhythm",
+        }
+        jobs[job_id] = {
+            "job_id": job_id,
+            "status": "queued",
+            "audio_url": None,
+            "lyrics": lyrics,
+            "waveform": [],
+            "references": reference_notes("mugithi"),
+            "engine": "suno" if SunoClient.from_env() else "local",
+            "suno_task_id": None,
+            "title": req.topic,
+            "genre": "mugithi",
+            "created_at": time.time(),
+            "request": payload,
+            "payload": payload,
+        }
+        background_tasks.add_task(_render_job, job_id)
+        result["job_id"] = job_id
+    return result
+
+
 class AdvancedSongRequest(BaseModel):
     genre: str = Field(default="mugithi")
     mood: str = Field(default="energetic")
