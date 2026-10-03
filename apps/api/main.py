@@ -51,6 +51,8 @@ class GenerateSongRequest(BaseModel):
     prompt: str = Field(..., description="Natural language prompt.")
     topic: Optional[str] = Field(default="", description="Song topic used to generate lyrics when lyrics are omitted.")
     style_prompt: Optional[str] = Field(default="", description="Optional composed style prompt to steer generation.")
+    vocal_dynamics: Optional[str] = Field(default="", description="Vocal delivery/expression steering.")
+    percussion_pattern: Optional[str] = Field(default="", description="Rhythm/beat formation steering.")
     lyrics: Optional[str] = Field(default="", description="Song lyrics. Auto-generated from the topic when omitted.")
     language: str = Field(default="gikuyu", description="Language of the lyrics")
     genre: str = Field(default="mugithi", description="Desired music genre")
@@ -96,7 +98,8 @@ def health():
     return {"status": "ok"}
 
 
-def _build_style_prompt(genre: str, mood: str, instruments: List[str], language: str, topic: str) -> str:
+def _build_style_prompt(genre: str, mood: str, instruments: List[str], language: str, topic: str,
+                        vocal_dynamics: str = "", percussion_pattern: str = "") -> str:
     """Compose a rich style prompt from the Mugithi reference experience."""
     style = reference_notes(genre)
     groove = style[1].split(": ", 1)[-1] if len(style) > 1 else "driving East African groove"
@@ -110,6 +113,10 @@ def _build_style_prompt(genre: str, mood: str, instruments: List[str], language:
     ]
     if structure:
         parts.append(f"structure: {structure}")
+    if vocal_dynamics:
+        parts.append(f"vocal dynamics: {vocal_dynamics}")
+    if percussion_pattern:
+        parts.append(f"percussion: {percussion_pattern}")
     if topic:
         parts.append(f"theme: {topic}")
     return ". ".join(parts) + "."
@@ -121,6 +128,8 @@ class StylePromptRequest(BaseModel):
     instruments: Optional[List[str]] = None
     language: str = Field(default="gikuyu")
     topic: Optional[str] = ""
+    vocal_dynamics: Optional[str] = Field(default="dynamic, emotive, call-and-response harmony")
+    percussion_pattern: Optional[str] = Field(default="syncopated percussive beat, steady kick drum, crisp snare")
     use_suno: bool = Field(default=False, description="Self-generate an enhanced style via Suno boost.")
 
 
@@ -132,7 +141,8 @@ class StylePromptResponse(BaseModel):
 @app.post("/style-prompt", response_model=StylePromptResponse)
 def style_prompt(req: StylePromptRequest):
     """Compose a style prompt locally, or self-generate an enhanced one via Suno."""
-    base = _build_style_prompt(req.genre, req.mood, req.instruments or [], req.language, req.topic or "")
+    base = _build_style_prompt(req.genre, req.mood, req.instruments or [], req.language, req.topic or "",
+                               req.vocal_dynamics or "", req.percussion_pattern or "")
     if req.use_suno:
         client = SunoClient.from_env()
         if client:
@@ -145,6 +155,27 @@ def style_prompt(req: StylePromptRequest):
                 pass
         return StylePromptResponse(style_prompt=base, engine="local")
     return StylePromptResponse(style_prompt=base, engine="local")
+
+
+class AdvancedSongRequest(BaseModel):
+    genre: str = Field(default="mugithi")
+    mood: str = Field(default="energetic")
+    instruments: List[str] = Field(default=["wandĩndĩ", "acoustic guitar", "kĩgamba"])
+    language: str = Field(default="gikuyu")
+    topic: Optional[str] = None
+    vocal_dynamics: Optional[str] = Field(default="dynamic, emotive, call-and-response harmony")
+    percussion_pattern: Optional[str] = Field(default="syncopated percussive beat, steady kick drum, crisp snare")
+
+
+@app.post("/advanced-style-prompt")
+def generate_advanced_style_prompt(req: AdvancedSongRequest):
+    """Compose a detailed style prompt with vocal dynamics and percussion
+    formation for AI music models (Suno or the local engine)."""
+    style = _build_style_prompt(
+        req.genre, req.mood, req.instruments, req.language, req.topic or "",
+        req.vocal_dynamics or "", req.percussion_pattern or "",
+    )
+    return {"status": "success", "genre": req.genre, "style_prompt": style}
 
 
 @app.post("/generate-lyrics", response_model=GenerateLyricsResponse)
@@ -182,6 +213,8 @@ def generate_song(req: GenerateSongRequest, background_tasks: BackgroundTasks):
         "instruments": req.instruments,
         "duration_sec": req.duration_sec,
         "style_prompt": (req.style_prompt or "").strip(),
+        "vocal_dynamics": (req.vocal_dynamics or "").strip(),
+        "percussion_pattern": (req.percussion_pattern or "").strip(),
     }
 
     # In production, this would publish to Celery / Redis.

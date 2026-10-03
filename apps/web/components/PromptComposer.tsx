@@ -36,6 +36,8 @@ export default function PromptComposer() {
   const [styleLoading, setStyleLoading] = useState(false);
   const [stylePrompt, setStylePrompt] = useState("");
   const [useSunoStyle, setUseSunoStyle] = useState(false);
+  const [vocalDynamics, setVocalDynamics] = useState("dynamic, emotive, call-and-response harmony");
+  const [percussionPattern, setPercussionPattern] = useState("syncopated percussive beat, steady kick drum, crisp snare");
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<string | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
@@ -134,7 +136,7 @@ export default function PromptComposer() {
       const response = await fetch(`${API_BASE}/style-prompt`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ genre, mood, instruments, language, topic: topic.trim() || prompt.trim(), use_suno: useSunoStyle }),
+        body: JSON.stringify({ genre, mood, instruments, language, topic: topic.trim() || prompt.trim(), vocal_dynamics: vocalDynamics, percussion_pattern: percussionPattern, use_suno: useSunoStyle }),
       });
       if (!response.ok) throw new Error(`Style prompt failed: ${response.status}`);
       const data = await response.json();
@@ -160,6 +162,8 @@ export default function PromptComposer() {
           prompt,
           topic,
           style_prompt: stylePrompt || undefined,
+          vocal_dynamics: vocalDynamics,
+          percussion_pattern: percussionPattern,
           lyrics,
           language,
           genre,
@@ -299,6 +303,27 @@ export default function PromptComposer() {
                   </option>
                 ))}
               </select>
+            </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div>
+              <label className="mb-2 block text-sm text-slate-300">Vocal Dynamics</label>
+              <input
+                value={vocalDynamics}
+                onChange={(e) => setVocalDynamics(e.target.value)}
+                placeholder="dynamic, emotive, call-and-response harmony"
+                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition focus:border-emerald-500"
+              />
+            </div>
+            <div>
+              <label className="mb-2 block text-sm text-slate-300">Percussion Pattern</label>
+              <input
+                value={percussionPattern}
+                onChange={(e) => setPercussionPattern(e.target.value)}
+                placeholder="syncopated beat, steady kick drum, crisp snare"
+                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition focus:border-emerald-500"
+              />
             </div>
           </div>
 

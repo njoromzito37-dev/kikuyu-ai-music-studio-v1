@@ -436,9 +436,10 @@ def _lyrics_sections(lyrics: str) -> dict:
     return sections
 
 
-def _place_vocals(mix: np.ndarray, key_root: str, lyrics: str, section_times: dict, bpm: float, rng) -> None:
+def _place_vocals(mix: np.ndarray, key_root: str, lyrics: str, section_times: dict, bpm: float, rng, vocal_energy: float = 1.0) -> None:
     """Sing the lyrics over verse/chorus/outro with dynamics: verses stay
-    intimate, the chorus lifts and doubles, phrases swell toward their end."""
+    intimate, the chorus lifts and doubles, phrases swell toward their end.
+    vocal_energy widens the expressive range when vocal dynamics call for it."""
     lyrics_sections = _lyrics_sections(lyrics)
     if not any(lyrics_sections.values()):
         return
@@ -453,7 +454,7 @@ def _place_vocals(mix: np.ndarray, key_root: str, lyrics: str, section_times: di
         if not words:
             continue
         step = dur_t / len(words)
-        section_gain = VOCAL_SECTION_GAIN.get(section, 1.0)
+        section_gain = VOCAL_SECTION_GAIN.get(section, 1.0) * vocal_energy
         for i, word in enumerate(words):
             note = base + PENTATONIC[rng.integers(0, len(PENTATONIC))]
             vowel = next((c for c in word if c.lower() in VOWEL_FORMANTS), "a")
@@ -491,6 +492,16 @@ def render_song(payload: dict, out_dir: str, stem: str, remaster: bool = False) 
     mix = np.zeros(int(SAMPLE_RATE * total_s), dtype=np.float32)
     rng = np.random.default_rng(42)
     swing = float(payload.get("swing") or 0.08)  # eighth-note swing: speeds/slows off-beats
+
+    # Vocal dynamics: "dynamic"/"emotive" widen the expressive range.
+    vocal_dynamics = (payload.get("vocal_dynamics") or "").lower()
+    vocal_energy = 1.2 if any(k in vocal_dynamics for k in ("dynamic", "emotive", "expressive")) else 1.0
+
+    # Percussion pattern: keywords steer beat emphasis.
+    percussion_pattern = (payload.get("percussion_pattern") or "").lower()
+    kick_gain = 1.0 if "steady kick" in percussion_pattern or "kick" in percussion_pattern else 0.9
+    snare_gain = 1.1 if "snare" in percussion_pattern else 1.0
+    extra_syncopation = "syncopat" in percussion_pattern
     lyrics = unicodedata.normalize("NFC", payload.get("lyrics") or "")
     section_times: dict = {}
 
@@ -521,12 +532,14 @@ def render_song(payload: dict, out_dir: str, stem: str, remaster: bool = False) 
                         _place(mix, _ks_pluck(_freq(m), eighth * 1.5), slot_t + j * 0.006, 0.38)
             # Percussion: four-on-the-floor kick, swung 8th shakers, snare on 2 & 4
             for b in range(4):
-                _place(mix, kick, bar_start + b * beat, 0.9 if section != "intro" else 0.5)
+                _place(mix, kick, bar_start + b * beat, (0.9 if section != "intro" else 0.5) * kick_gain)
                 _place(mix, shaker, bar_start + b * beat + eighth * (1 + swing), 0.5)
                 if section in ("chorus", "outro"):
                     _place(mix, shaker, bar_start + b * beat, 0.3)
                 if b in (1, 3) and section not in ("intro",):
-                    _place(mix, snare, bar_start + b * beat, 0.55)
+                    _place(mix, snare, bar_start + b * beat, 0.55 * snare_gain)
+                if extra_syncopation and section != "intro":
+                    _place(mix, snare, bar_start + b * beat + eighth * 1.5, 0.3)
             # Call-and-response lead hook in chorus/outro
             if section in ("chorus", "outro"):
                 for k in range(2):
@@ -537,7 +550,7 @@ def render_song(payload: dict, out_dir: str, stem: str, remaster: bool = False) 
         section_times[section] = (section_start, t - section_start)
 
     # Sing the lyrics over the sung sections
-    _place_vocals(mix, key_root, lyrics, section_times, bpm, rng)
+    _place_vocals(mix, key_root, lyrics, section_times, bpm, rng, vocal_energy)
 
     # Layer every selected instrument
     _layer_instruments(mix, payload.get("instruments") or [], key_root, progression, sections, bpm, rng)
