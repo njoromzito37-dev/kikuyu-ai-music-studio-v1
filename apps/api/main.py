@@ -143,6 +143,9 @@ def generate_song(req: GenerateSongRequest, background_tasks: BackgroundTasks):
         "references": reference_notes(req.genre),
         "engine": "suno" if SunoClient.from_env() else "local",
         "suno_task_id": None,
+        "title": (req.topic or "").strip() or req.prompt[:60],
+        "genre": req.genre,
+        "created_at": time.time(),
         "payload": payload,
     }
     background_tasks.add_task(_render_job, job_id)
@@ -456,6 +459,40 @@ def suno_quota():
         return _suno().get_quota()
     except SunoError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/songs")
+def list_songs(download: Optional[str] = None):
+    """Library of generated songs. Pass ?download=<job_id> to force a file download."""
+    if download:
+        job = jobs.get(download)
+        if job is None or job["status"] != "completed":
+            raise HTTPException(status_code=404, detail="Song not ready.")
+        audio = job["audio_url"] or ""
+        if audio.startswith("/generated/"):
+            from fastapi.responses import FileResponse
+            path = os.path.join(GENERATED_DIR, os.path.basename(audio))
+            if not os.path.exists(path):
+                raise HTTPException(status_code=404, detail="Audio file missing.")
+            safe = "".join(c if c.isalnum() or c in " -_" else "" for c in job["title"]).strip() or "song"
+            return FileResponse(path, media_type="audio/wav", filename=f"{safe}.wav")
+        return {"audio_url": audio}
+    items = []
+    for job in jobs.values():
+        if job["status"] != "completed":
+            continue
+        audio = job["audio_url"] or ""
+        items.append({
+            "job_id": job["job_id"],
+            "title": job["title"],
+            "genre": job["genre"],
+            "engine": job["engine"],
+            "created_at": job["created_at"],
+            "audio_url": audio,
+            "download_url": f"/api/songs?download={job['job_id']}",
+        })
+    items.sort(key=lambda item: item["created_at"], reverse=True)
+    return {"songs": items}
 
 
 @app.get("/jobs/{job_id}", response_model=JobStatusResponse)

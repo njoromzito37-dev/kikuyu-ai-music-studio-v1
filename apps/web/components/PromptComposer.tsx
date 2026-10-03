@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import AudioPlayer from "@/components/AudioPlayer";
+import SongLibrary from "@/components/SongLibrary";
 
 // Call the API through the Next.js proxy (same origin as the page) so the
 // browser never talks to the backend port directly; works in Codespaces.
@@ -38,6 +39,7 @@ export default function PromptComposer() {
   const [waveform, setWaveform] = useState<number[]>([]);
   const [references, setReferences] = useState<string[]>([]);
   const [suno, setSuno] = useState<{ enabled: boolean; functions: string[] } | null>(null);
+  const [libraryRefresh, setLibraryRefresh] = useState(0);
 
   useEffect(() => {
     fetch(`${API_BASE}/suno/enabled`)
@@ -75,6 +77,7 @@ export default function PromptComposer() {
           const url = data.audio_url.startsWith("/") ? `${API_BASE}${data.audio_url}` : data.audio_url;
           setAudioUrl(url);
           setWaveform(Array.isArray(data.waveform) ? data.waveform : []);
+          setLibraryRefresh((key) => key + 1);
           window.clearInterval(timer);
         } else if (data.status === "failed") {
           window.clearInterval(timer);
@@ -320,6 +323,14 @@ export default function PromptComposer() {
           <h2 className="mb-4 text-xl font-semibold text-white">Audio Output</h2>
           <AudioPlayer src={audioUrl} waveform={waveform} />
         </div>
+
+        <SongLibrary
+          refreshKey={libraryRefresh}
+          onSelect={(url) => {
+            setAudioUrl(url);
+            setWaveform([]);
+          }}
+        />
 
         <div className="rounded-3xl border border-slate-800 bg-slate-900/70 p-6">
           <h2 className="mb-3 text-xl font-semibold text-white">Preset</h2>
