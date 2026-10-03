@@ -8,6 +8,7 @@ A Suno-style AI music generation platform for Gĩkũyũ language and Kenyan musi
 - Gĩkũyũ, Swahili, and English lyric support
 - Genre presets for Mugithi, Gospel/Kĩrooko, Benga, Mwomboko, Afro-pop, and Acoustic Folk
 - FastAPI backend with async Celery generation jobs
+- Django REST API option with account-owned songs, genre catalog, and Celery audio generation
 - Next.js + Tailwind frontend
 - PostgreSQL-ready schemas for users, songs, and generation metadata
 - Audio preview and waveform-style visualizer
@@ -26,7 +27,14 @@ A Suno-style AI music generation platform for Gĩkũyũ language and Kenyan musi
 ├── apps/
 │   ├── api/
 │   │   ├── main.py
-│   │   └── requirements.txt
+│   │   ├── manage.py
+│   │   ├── requirements.txt
+│   │   ├── config/
+│   │   └── music/
+│   │       ├── models.py
+│   │       ├── serializers.py
+│   │       ├── tasks.py
+│   │       └── services/prompt_engine.py
 │   ├── web/
 │   │   ├── app/
 │   │   ├── components/
@@ -42,8 +50,7 @@ A Suno-style AI music generation platform for Gĩkũyũ language and Kenyan musi
 ├── docker-compose.yml
 ├── .env.example
 ├── .gitignore
-├── README.md
-└──
+└── README.md
 ```
 
 ## Quick start
@@ -54,7 +61,7 @@ A Suno-style AI music generation platform for Gĩkũyũ language and Kenyan musi
 docker compose up -d postgres redis
 ```
 
-### 2) Start the backend
+### 2) Start the existing FastAPI prototype
 
 ```bash
 cd apps/api
@@ -63,6 +70,28 @@ source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+### Django REST API
+
+The Django implementation lives beside the FastAPI prototype in `apps/api`. Copy `.env.example` to `.env` at the repository root and replace `DJANGO_SECRET_KEY` with a long random value. Install the same requirements, configure a compatible audio provider URL, then run:
+
+```bash
+cd apps/api
+python manage.py migrate
+python manage.py createsuperuser
+python manage.py seed_catalog
+python manage.py runserver 0.0.0.0:8000
+```
+
+Run its Celery worker in a second terminal from `apps/api`:
+
+```bash
+celery -A config worker --loglevel=info
+```
+
+The DRF endpoints are `POST /api/generate/`, `GET /api/songs/?genre=mugithi`, `GET /api/songs/<id>/`, and `GET /api/genres/`. They require an authenticated Django user. Configure TLS and a production authentication backend before exposing the API. `GENERATION_BACKEND_URL` must point to a synchronous provider endpoint that accepts the task JSON and returns either audio bytes or JSON containing an `audio_url`; generated audio is limited by `GENERATION_MAX_AUDIO_BYTES`. Install `ffmpeg` on workers to populate waveform data; waveform extraction is skipped when it is unavailable. Configure Django's `STORAGES` for S3-compatible media storage in production.
+
+The built-in lyric composer structures supplied lyrics and provides deterministic starter templates. It is not a translation or language-model service; connect a Gĩkũyũ-capable text model if fluent, prompt-specific lyrics are required.
 
 ### 3) Start the worker
 

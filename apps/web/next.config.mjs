@@ -1,3 +1,5 @@
-module.exports = {
+const nextConfig = {
   compiler: {},
 };
+
+export default nextConfig;
