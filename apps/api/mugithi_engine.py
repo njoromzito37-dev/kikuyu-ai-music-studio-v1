@@ -31,26 +31,33 @@ MUGITHI_REFERENCE = {
         "Samidoh",
         "Mighty Salim",
         "Kigia wa Esther",
+        "DK Kwenye Beat",
+        "Wangari wa Kabera",
     ],
     "songs": [
         "Wendo wa Cembe (cembe ya wendo) - hoe-of-love metaphor classics",
         "Tiga Kumute (De'Mathew) - storytelling over a single-guitar groove",
         "Mwendwa KK (Queen Jane) - call-and-response romantic duet phrasing",
+        "Gĩkũyũ ni Gĩkũyũ (Kamaru) - identity anthem with driving one-man guitar",
         "Mũgithi train performances - nonstop medley with tempo switches",
+        "Samidoh live band - syncopated percussion and riff-driven dance breaks",
     ],
     "style": {
         "tempo_bpm": 132,
         "meter": "4/4",
-        "groove": "alternating bass-note / chord-stab eighth-note pattern (the 'one-man guitar' band style)",
+        "groove": "alternating bass-note / chord-stab eighth-note pattern (the 'one-man guitar' band style), with I-V passing-chord walk-ups into each bar",
         "structure": "intro riff -> verse groove -> chorus hook -> Mũgithi tempo switch -> fast outro",
-        "harmony": "I-IV-V in a bright major key, pentatonic lead fills",
-        "vocals": "call-and-response: solo voice calls, chorus answers",
+        "harmony": "I-IV-V in a bright major key, pentatonic lead fills, IV-V passing chords",
+        "lead_guitar": "single-note pentatonic riff on the and-of-4, sliding into the next bar",
+        "percussion": "driving four-on-the-floor kick, crisp snare backbeat, kĩgamba/shaker eighths",
+        "vocals": "call-and-response: solo voice calls, choir answers, harmonized hooks",
     },
     "themes": [
         "wendo (love) told through everyday metaphors",
         "gũkũũ / nostalgia for the homeland",
         "dance and celebration (rĩmũ, mũgithi night)",
         "advice and storytelling (thimo na ngano)",
+        "gĩkũyũ identity and community pride",
     ],
 }
 
@@ -111,6 +118,9 @@ def reference_notes(genre: str):
     return [
         f"Mugithi canon: {', '.join(ref['artists'][:4])}",
         f"Groove: {style['groove']}",
+        f"Lead guitar: {style['lead_guitar']}",
+        f"Percussion: {style['percussion']}",
+        f"Vocals: {style['vocals']}",
         f"Structure: {style['structure']}",
         f"Theme: {ref['themes'][0]}",
     ]
@@ -482,7 +492,7 @@ def render_song(payload: dict, out_dir: str, stem: str, remaster: bool = False) 
     intro_bars, chorus_bars, switch_bars, outro_bars = 1, 4, (1 if is_mugithi else 0), 3
     verse_bars = max(2, total_bars - intro_bars - chorus_bars - switch_bars - outro_bars)
 
-    fast_bpm = bpm * (1.18 if is_mugithi else 1.0)  # the Mũgithi tempo switch
+    fast_bpm = bpm * (1.25 if is_mugithi else 1.0)  # Mũgithi live-show tempo switch
     sections = [("intro", intro_bars, bpm), ("verse", verse_bars, bpm), ("chorus", chorus_bars, bpm)]
     if switch_bars:
         sections.append(("switch", switch_bars, bpm))
@@ -519,7 +529,8 @@ def render_song(payload: dict, out_dir: str, stem: str, remaster: bool = False) 
             chord = _chord_midis(key_root, degree, quality, 3)
             bass_root = chord[0] - 12
             bar_start = t
-            # Groove: 8 eighth-note slots -> alternating bass note / chord stab
+            # Signature Mugithi groove: bass-note / chord-stab eighths, a I-V
+            # passing-chord walk-up late in the bar, and a lead riff answering.
             for slot in range(8):
                 slot_t = bar_start + slot * eighth
                 if slot % 2 == 0:
@@ -530,6 +541,16 @@ def render_song(payload: dict, out_dir: str, stem: str, remaster: bool = False) 
                         continue
                     for j, m in enumerate(chord):
                         _place(mix, _ks_pluck(_freq(m), eighth * 1.5), slot_t + j * 0.006, 0.38)
+            # Passing chord: quick V triad on the and-of-4 leading to the next bar
+            if is_mugithi and section != "intro":
+                passing = _chord_midis(key_root, 4, "maj", 3)  # V
+                passing_t = bar_start + 3 * beat + eighth
+                for m in passing:
+                    _place(mix, _ks_pluck(_freq(m), eighth * 1.2), passing_t, 0.3)
+            # Lead riff: single-note pentatonic answer on the and-of-4 (verse/chorus)
+            if is_mugithi and section in ("verse", "chorus"):
+                riff_note = _midi(key_root, 5) + PENTATONIC[rng.integers(0, len(PENTATONIC))]
+                _place(mix, _ks_pluck(_freq(riff_note), eighth * 1.6, brightness=0.85), bar_start + 3 * beat + eighth, 0.4)
             # Percussion: four-on-the-floor kick, swung 8th shakers, snare on 2 & 4
             for b in range(4):
                 _place(mix, kick, bar_start + b * beat, (0.9 if section != "intro" else 0.5) * kick_gain)
