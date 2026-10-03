@@ -9,6 +9,8 @@ physical modelling (acoustic guitar), a bass voice, and kick/shaker/snare.
 """
 
 import os
+import re
+import unicodedata
 import wave
 from array import array
 
@@ -180,6 +182,101 @@ def _lead_phrase(key_root: str, rng, bars: int, octave: int = 5) -> list:
     return notes
 
 
+# ---------------------------------------------------------------------------
+# Vocal synthesis - a simple singing voice for the lyrics
+# ---------------------------------------------------------------------------
+
+VOWEL_FORMANTS = {
+    "a": [730, 1090, 2440],
+    "e": [530, 1840, 2480],
+    "i": [390, 1990, 2550],
+    "o": [570, 840, 2410],
+    "u": [300, 870, 2240],
+}
+
+
+def _sing_vowel(freq: float, dur: float, vowel: str) -> np.ndarray:
+    """Synthesize a sung vowel: glottal pulse source shaped by formant resonances,
+    with vibrato and an amplitude envelope - reads as a vocal line."""
+    n = int(SAMPLE_RATE * dur)
+    if n <= 0:
+        return np.zeros(0, dtype=np.float32)
+    t = np.arange(n) / SAMPLE_RATE
+    vibrato = 1.0 + 0.008 * np.sin(2 * np.pi * 5.5 * t)  # gentle 5.5 Hz vibrato
+    phase = 2 * np.pi * np.cumsum(freq * vibrato) / SAMPLE_RATE
+    sig = np.zeros(n)
+    for harmonic in range(1, 7):
+        sig += (1.0 / harmonic) * np.sin(harmonic * phase)
+    sig *= 0.6  # stronger glottal source
+    # formant resonances give the vowel its character
+    out = np.zeros(n)
+    for formant in VOWEL_FORMANTS.get(vowel.lower(), VOWEL_FORMANTS["a"]):
+        out += _resonate(sig, formant, formant * 0.15)
+    peak = float(np.max(np.abs(out))) or 1.0
+    out = out / peak * 0.9  # normalize each sung note to a consistent level
+    # amplitude envelope: quick attack, sustain, short release
+    env = np.minimum(1.0, np.arange(n) / (0.03 * SAMPLE_RATE))
+    release = max(1, int(0.08 * SAMPLE_RATE))
+    env[-release:] *= np.linspace(1.0, 0.0, release)
+    return (out * env).astype(np.float32)
+
+
+def _resonate(x: np.ndarray, center: float, bw: float) -> np.ndarray:
+    """Fast formant resonator via FFT bandpass around `center` Hz."""
+    if len(x) == 0:
+        return x
+    spectrum = np.fft.rfft(x)
+    freqs = np.fft.rfftfreq(len(x), 1 / SAMPLE_RATE)
+    gain = 1.0 / (1.0 + ((freqs - center) / max(bw, 1.0)) ** 2)
+    return np.fft.irfft(spectrum * gain, len(x))
+
+
+def _lyrics_sections(lyrics: str) -> dict:
+    """Split structured lyrics into {section: [lines]} by [Section] headers."""
+    sections: dict = {}
+    current = "verse"
+    for raw in (lyrics or "").splitlines():
+        line = raw.strip()
+        match = re.match(r"^\[(.+?)\]", line)
+        if match:
+            label = match.group(1).lower()
+            if "chorus" in label:
+                current = "chorus"
+            elif "outro" in label or "tempo" in label or "switch" in label:
+                current = "outro"
+            elif "interlude" in label or "solo" in label:
+                current = "_instrumental"
+            else:
+                current = "verse"
+            continue
+        if line and current != "_instrumental":
+            sections.setdefault(current, []).append(line)
+    return sections
+
+
+def _place_vocals(mix: np.ndarray, key_root: str, lyrics: str, section_times: dict, bpm: float, rng) -> None:
+    """Sing the lyrics over verse/chorus/outro, following the melody."""
+    lyrics_sections = _lyrics_sections(lyrics)
+    if not any(lyrics_sections.values()):
+        return
+    base = _midi(key_root, 4)
+    beat = 60 / bpm
+    for section in ("verse", "chorus", "outro"):
+        lines = lyrics_sections.get(section) or []
+        if not lines or section not in section_times:
+            continue
+        start_t, dur_t = section_times[section]
+        words = " ".join(lines).split()
+        if not words:
+            continue
+        step = dur_t / len(words)
+        for i, word in enumerate(words):
+            note = base + PENTATONIC[rng.integers(0, len(PENTATONIC))]
+            vowel = next((c for c in word if c.lower() in VOWEL_FORMANTS), "a")
+            note_dur = min(max(step * 0.9, beat * 0.35), beat * 1.1)
+            _place(mix, _sing_vowel(_freq(note), note_dur, vowel), start_t + i * step, 1.6)
+
+
 def render_song(payload: dict, out_dir: str, stem: str, remaster: bool = False) -> dict:
     """Render a real WAV grounded in the Mugithi reference style."""
     genre = (payload.get("genre") or "mugithi").lower()
@@ -204,6 +301,8 @@ def render_song(payload: dict, out_dir: str, stem: str, remaster: bool = False) 
     total_s = sum(bars * 4 * 60 / sec_bpm for _, bars, sec_bpm in sections) + 1.5
     mix = np.zeros(int(SAMPLE_RATE * total_s), dtype=np.float32)
     rng = np.random.default_rng(42)
+    lyrics = unicodedata.normalize("NFC", payload.get("lyrics") or "")
+    section_times: dict = {}
 
     kick, shaker, snare = _kick(), _shaker(), _snare()
     lead_notes = _lead_phrase(key_root, rng, 2)
@@ -213,6 +312,7 @@ def render_song(payload: dict, out_dir: str, stem: str, remaster: bool = False) 
     for section, bars, sec_bpm in sections:
         beat = 60 / sec_bpm
         eighth = beat / 2
+        section_start = t
         for bar in range(bars):
             degree, quality = progression[bar % len(progression)]
             chord = _chord_midis(key_root, degree, quality, 3)
@@ -244,6 +344,10 @@ def render_song(payload: dict, out_dir: str, stem: str, remaster: bool = False) 
                     lead_idx += 1
                     _place(mix, _ks_pluck(_freq(note), beat * 1.6, brightness=0.8), bar_start + k * 2 * beat, 0.5)
             t = bar_start + 4 * beat
+        section_times[section] = (section_start, t - section_start)
+
+    # Sing the lyrics over the sung sections
+    _place_vocals(mix, key_root, lyrics, section_times, bpm, rng)
 
     # gentle master: soft clip + normalize
     mix = np.tanh(mix)
