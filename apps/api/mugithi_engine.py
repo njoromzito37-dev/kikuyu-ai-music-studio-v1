@@ -75,6 +75,30 @@ GENRE_PROGRESSIONS = {
 
 GENRE_BPM = {"mugithi": 132, "benga": 138, "gospel": 96, "mwomboko": 118, "afro-pop": 104, "acoustic-folk": 92}
 
+# How loud each instrument sits in the blend (mix gain) and its pitch
+# offset in semitones relative to its written part.
+INSTRUMENT_MIX = {
+    "wandĩndĩ": {"gain": 0.9, "pitch": 0},
+    "kĩgamba": {"gain": 0.5, "pitch": 0},
+    "coro": {"gain": 0.7, "pitch": 0},
+    "ndũmũ": {"gain": 0.75, "pitch": 0},
+    "mũgũgũmũ": {"gain": 0.85, "pitch": 0},
+    "acoustic guitar": {"gain": 1.0, "pitch": 0},
+    "electric guitar": {"gain": 0.8, "pitch": 0},
+    "bass": {"gain": 1.0, "pitch": 0},
+    "accordion": {"gain": 0.55, "pitch": 0},
+    "keyboard": {"gain": 0.5, "pitch": 0},
+    "synthesizers": {"gain": 0.45, "pitch": 0},
+    "brass section": {"gain": 0.6, "pitch": 0},
+    "drum kit": {"gain": 0.9, "pitch": 0},
+    "djembe": {"gain": 0.8, "pitch": 0},
+    "marimba": {"gain": 0.5, "pitch": 0},
+    "choir": {"gain": 0.6, "pitch": 0},
+}
+
+# Vocal loudness per section - verses intimate, chorus lifts, outro peaks.
+VOCAL_SECTION_GAIN = {"verse": 1.0, "chorus": 1.35, "outro": 1.15}
+
 NOTE_SEMITONES = {"C": 0, "C#": 1, "D": 2, "D#": 3, "E": 4, "F": 5, "F#": 6, "G": 7, "G#": 8, "A": 9, "A#": 10, "B": 11}
 MAJOR_SCALE = [0, 2, 4, 5, 7, 9, 11]
 PENTATONIC = [0, 2, 4, 7, 9]
@@ -269,44 +293,48 @@ def _rattle(dur: float = 0.08) -> np.ndarray:
 
 
 def _layer_instruments(mix: np.ndarray, instruments: list, key_root: str, progression: list, sections: list, bpm: float, rng) -> None:
-    """Layer each selected instrument into the arrangement per its role."""
+    """Layer each selected instrument into the arrangement, blended by gain
+    and pitch per INSTRUMENT_MIX for a balanced, in-tune mix."""
     base = _midi(key_root, 4)
     kick, shaker = _kick(), _shaker()
     t = 0.0
     for section, bars, sec_bpm in sections:
         beat = 60 / sec_bpm
-        section_start = t
         for bar in range(bars):
             degree, quality = progression[bar % len(progression)]
             chord = _chord_midis(key_root, degree, quality, 3)
             bar_start = t
             for inst in instruments:
                 slug = inst.strip().lower()
-                if slug in ("kĩgamba",):
+                blend = INSTRUMENT_MIX.get(slug, {"gain": 0.6, "pitch": 0})
+                gain = blend["gain"]
+                semitones = blend["pitch"]
+                pitch_ratio = 2 ** (semitones / 12)
+                if slug == "kĩgamba":
                     for b in range(4):
-                        _place(mix, _rattle(), bar_start + b * beat, 0.5)
+                        _place(mix, _rattle(), bar_start + b * beat, gain)
                 elif slug in ("mũgũgũmũ", "djembe"):
-                    _place(mix, _drum_hit(), bar_start, 0.6)
-                    _place(mix, _drum_hit(0.1, 90.0), bar_start + 2 * beat, 0.5)
+                    _place(mix, _drum_hit(), bar_start, gain)
+                    _place(mix, _drum_hit(0.1, 90.0 * pitch_ratio), bar_start + 2 * beat, gain * 0.85)
                 elif slug in ("ndũmũ", "flute") and section in ("verse", "chorus"):
                     note = base + PENTATONIC[rng.integers(0, len(PENTATONIC))]
-                    _place(mix, _flute(_freq(note), beat * 2), bar_start + bar * 0, 0.4)
+                    _place(mix, _flute(_freq(note) * pitch_ratio, beat * 2), bar_start, gain)
                 elif slug == "coro" and section in ("intro", "chorus"):
-                    _place(mix, _horn(_freq(base), beat * 1.5), bar_start, 0.4)
+                    _place(mix, _horn(_freq(base) * pitch_ratio, beat * 1.5), bar_start, gain)
                 elif slug in ("wandĩndĩ", "fiddle") and section in ("verse", "chorus"):
                     note = base + 12 + PENTATONIC[rng.integers(0, len(PENTATONIC))]
-                    _place(mix, _ks_pluck(_freq(note), beat, brightness=0.9), bar_start + beat, 0.35)
+                    _place(mix, _ks_pluck(_freq(note) * pitch_ratio, beat, brightness=0.9), bar_start + beat, gain)
                 elif slug in ("accordion", "keyboard", "synthesizers", "brass section") and section != "intro":
                     for m in chord:
-                        _place(mix, _saw(_freq(m + 12), beat * 1.8), bar_start, 0.12)
+                        _place(mix, _saw(_freq(m + 12) * pitch_ratio, beat * 1.8), bar_start, gain)
                 elif slug == "marimba" and section in ("verse", "chorus"):
                     for b in range(4):
                         note = base + PENTATONIC[(bar + b) % len(PENTATONIC)]
-                        _place(mix, _marimba(_freq(note + 12), beat * 0.9), bar_start + b * beat, 0.2)
+                        _place(mix, _marimba(_freq(note + 12) * pitch_ratio, beat * 0.9), bar_start + b * beat, gain)
                 elif slug == "drum kit" and section != "intro":
                     for b in range(4):
-                        _place(mix, kick, bar_start + b * beat, 0.4)
-                        _place(mix, shaker, bar_start + b * beat + beat / 2, 0.3)
+                        _place(mix, kick, bar_start + b * beat, gain * 0.7)
+                        _place(mix, shaker, bar_start + b * beat + beat / 2, gain * 0.5)
             t = bar_start + 4 * beat
 
 
@@ -344,15 +372,19 @@ VOWEL_FORMANTS = {
 }
 
 
-def _sing_vowel(freq: float, dur: float, vowel: str) -> np.ndarray:
+def _sing_vowel(freq: float, dur: float, vowel: str, intensity: float = 1.0) -> np.ndarray:
     """Synthesize a sung vowel: glottal pulse source shaped by formant resonances,
-    with vibrato and an amplitude envelope - reads as a vocal line."""
+    with vibrato and an amplitude envelope - reads as a vocal line.
+
+    intensity drives vocal dynamics: louder, a touch of upward pitch bend,
+    deeper vibrato, and a crescendo swell across the note."""
     n = int(SAMPLE_RATE * dur)
     if n <= 0:
         return np.zeros(0, dtype=np.float32)
     t = np.arange(n) / SAMPLE_RATE
-    vibrato = 1.0 + 0.008 * np.sin(2 * np.pi * 5.5 * t)  # gentle 5.5 Hz vibrato
-    phase = 2 * np.pi * np.cumsum(freq * vibrato) / SAMPLE_RATE
+    vibrato = 1.0 + 0.008 * intensity * np.sin(2 * np.pi * 5.5 * t)  # vibrato deepens with intensity
+    bend = 1.0 + 0.004 * intensity * (t / max(dur, 1e-6))  # slight pitch bend up over the note
+    phase = 2 * np.pi * np.cumsum(freq * vibrato * bend) / SAMPLE_RATE
     sig = np.zeros(n)
     for harmonic in range(1, 7):
         sig += (1.0 / harmonic) * np.sin(harmonic * phase)
@@ -367,7 +399,8 @@ def _sing_vowel(freq: float, dur: float, vowel: str) -> np.ndarray:
     env = np.minimum(1.0, np.arange(n) / (0.03 * SAMPLE_RATE))
     release = max(1, int(0.08 * SAMPLE_RATE))
     env[-release:] *= np.linspace(1.0, 0.0, release)
-    return (out * env).astype(np.float32)
+    crescendo = 0.7 + 0.6 * intensity * (t / max(dur, 1e-6))  # swell through the note
+    return (out * env * crescendo).astype(np.float32)
 
 
 def _resonate(x: np.ndarray, center: float, bw: float) -> np.ndarray:
@@ -404,7 +437,8 @@ def _lyrics_sections(lyrics: str) -> dict:
 
 
 def _place_vocals(mix: np.ndarray, key_root: str, lyrics: str, section_times: dict, bpm: float, rng) -> None:
-    """Sing the lyrics over verse/chorus/outro, following the melody."""
+    """Sing the lyrics over verse/chorus/outro with dynamics: verses stay
+    intimate, the chorus lifts and doubles, phrases swell toward their end."""
     lyrics_sections = _lyrics_sections(lyrics)
     if not any(lyrics_sections.values()):
         return
@@ -419,11 +453,17 @@ def _place_vocals(mix: np.ndarray, key_root: str, lyrics: str, section_times: di
         if not words:
             continue
         step = dur_t / len(words)
+        section_gain = VOCAL_SECTION_GAIN.get(section, 1.0)
         for i, word in enumerate(words):
             note = base + PENTATONIC[rng.integers(0, len(PENTATONIC))]
             vowel = next((c for c in word if c.lower() in VOWEL_FORMANTS), "a")
             note_dur = min(max(step * 0.9, beat * 0.35), beat * 1.1)
-            _place(mix, _sing_vowel(_freq(note), note_dur, vowel), start_t + i * step, 1.6)
+            phrase_pos = i / max(len(words) - 1, 1)
+            intensity = section_gain * (0.85 + 0.3 * phrase_pos)  # phrases swell toward the end
+            _place(mix, _sing_vowel(_freq(note), note_dur, vowel, intensity), start_t + i * step, 1.5)
+            if section == "chorus":
+                # Double the chorus lead a third above for a fuller vocal.
+                _place(mix, _sing_vowel(_freq(note + 4), note_dur, vowel, intensity * 0.7), start_t + i * step, 0.6)
 
 
 def render_song(payload: dict, out_dir: str, stem: str, remaster: bool = False) -> dict:
@@ -450,6 +490,7 @@ def render_song(payload: dict, out_dir: str, stem: str, remaster: bool = False) 
     total_s = sum(bars * 4 * 60 / sec_bpm for _, bars, sec_bpm in sections) + 1.5
     mix = np.zeros(int(SAMPLE_RATE * total_s), dtype=np.float32)
     rng = np.random.default_rng(42)
+    swing = float(payload.get("swing") or 0.08)  # eighth-note swing: speeds/slows off-beats
     lyrics = unicodedata.normalize("NFC", payload.get("lyrics") or "")
     section_times: dict = {}
 
@@ -478,10 +519,10 @@ def render_song(payload: dict, out_dir: str, stem: str, remaster: bool = False) 
                         continue
                     for j, m in enumerate(chord):
                         _place(mix, _ks_pluck(_freq(m), eighth * 1.5), slot_t + j * 0.006, 0.38)
-            # Percussion: four-on-the-floor kick, 8th shakers, snare on 2 & 4
+            # Percussion: four-on-the-floor kick, swung 8th shakers, snare on 2 & 4
             for b in range(4):
                 _place(mix, kick, bar_start + b * beat, 0.9 if section != "intro" else 0.5)
-                _place(mix, shaker, bar_start + b * beat + eighth, 0.5)
+                _place(mix, shaker, bar_start + b * beat + eighth * (1 + swing), 0.5)
                 if section in ("chorus", "outro"):
                     _place(mix, shaker, bar_start + b * beat, 0.3)
                 if b in (1, 3) and section not in ("intro",):
