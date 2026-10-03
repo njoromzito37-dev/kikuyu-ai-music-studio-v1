@@ -28,6 +28,7 @@ export default function PromptComposer() {
   const [mood, setMood] = useState("romantic");
   const [instruments, setInstruments] = useState(["acoustic guitar", "bass"]);
   const [loading, setLoading] = useState(false);
+  const [lyricsLoading, setLyricsLoading] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<string | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
@@ -51,6 +52,9 @@ export default function PromptComposer() {
         const data = await response.json();
         if (cancelled) return;
         setJobStatus(data.status ?? null);
+        if (data.lyrics) {
+          setLyrics((prev) => (prev.trim() ? prev : data.lyrics));
+        }
         if (data.status === "completed" && data.audio_url) {
           setAudioUrl(data.audio_url);
           window.clearInterval(timer);
@@ -69,6 +73,27 @@ export default function PromptComposer() {
       window.clearInterval(timer);
     };
   }, [jobId]);
+
+  const handleGenerateLyrics = async () => {
+    if (!prompt.trim()) return;
+    setLyricsLoading(true);
+    try {
+      const response = await fetch(`${API_BASE}/generate-lyrics`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ topic: prompt, language, genre, mood }),
+      });
+      if (!response.ok) throw new Error(`Lyrics request failed: ${response.status}`);
+      const data = await response.json();
+      if (data.lyrics) {
+        setLyrics(data.lyrics);
+      }
+    } catch (error) {
+      console.error("Lyrics generation failed", error);
+    } finally {
+      setLyricsLoading(false);
+    }
+  };
 
   const handleGenerate = async () => {
     setLoading(true);
@@ -192,7 +217,18 @@ export default function PromptComposer() {
           </div>
 
           <div>
-            <label className="mb-2 block text-sm text-slate-300">Lyrics</label>
+            <div className="mb-2 flex items-center justify-between">
+              <label className="block text-sm text-slate-300">Lyrics</label>
+              <button
+                type="button"
+                onClick={handleGenerateLyrics}
+                disabled={lyricsLoading || !prompt.trim()}
+                className="rounded-full border border-cyan-500/50 px-3 py-1 text-xs text-cyan-300 transition hover:border-cyan-400 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
+                title="Generate lyrics from the prompt topic"
+              >
+                {lyricsLoading ? "Writing lyrics..." : "Generate from topic"}
+              </button>
+            </div>
             <textarea
               rows={12}
               value={lyrics}
