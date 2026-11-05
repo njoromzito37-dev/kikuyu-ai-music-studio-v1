@@ -6,6 +6,7 @@ A Suno-style AI music generation platform for Gĩkũyũ language and Kenyan musi
 
 - Prompt-based song generation (Suno AI when `SUNO_API_KEY` is set, local Mũgithi engine otherwise)
 - **Thematic lyric intelligence**: DeepSeek / Gemini write full, theme-driven lyrics from your prompt (Gĩkũyũ orthography preserved), with automatic fallback to built-in templates when no LLM key is configured
+- **Voice profiles & cloning**: pick the singer — male/female leads, child soloist, children's/male/female/mixed choirs, duet — injected as vocal prompt tags (`GET /voices`); singing-voice conversion into a target voice via a self-hosted RVC cloner (`POST /api/voices/clone/`)
 - DJ & live-mixing suite: dual-deck Web Audio booth (cue, pitch-bend, tempo sync, 4/8-beat loops, 3-band EQ, filter sweep), stem mute/solo/volume, BPM + key (Camelot) analysis, auto cue points, and an automated mashup/transition engine (`/api/dj/mix/`)
 - Full Suno function set via `/suno/*`: generate, lyrics, extend, cover, upload-extend/cover, add-vocals/instrumental, stems, convert-wav, timestamped lyrics, concat, mashup, persona, boost-style, status, quota
 - Gĩkũyũ, Swahili, and English lyric support
@@ -121,6 +122,21 @@ The Celery generation task renders through a provider seam (`music/services/song
 | `YUE_STAGE1_MODEL` / `YUE_STAGE2_MODEL` | YuE checkpoints | `m-a-p/YuE-s1-7B-anneal-en-cot` / `m-a-p/YuE-s2-1B-general` |
 | `YUE_MAX_NEW_TOKENS` / `YUE_TIMEOUT` / `YUE_CUDA_IDX` | YuE inference tuning | `4800` / `3600` / `0` |
 | `SUNO_MODEL` | Suno model id used by every client call | `V4_5` |
+
+### Voice profiles & singing-voice cloning
+
+`music/services/voices.py` holds the shared voice catalog (male/female leads, child, children's/male/female/mixed choirs, duet, praise leader). `seed_catalog` loads it into the `VoiceProfile` table; the FastAPI `/voices` endpoint and the composer's Voice dropdown read from the same source. Each profile's `prompt_tags` steer the generator's vocal rendering.
+
+For voice cloning, the `clone_vocals` Celery task converts a completed song's vocals into a target profile via RVC (Retrieval-based Voice Conversion) on a GPU worker:
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `VOICE_CLONER` | `off` or `rvc` | `off` |
+| `RVC_REPO_DIR` | RVC checkout | `third_party/Retrieval-based-Voice-Conversion-WebUI` |
+| `RVC_MODEL_DIR` | one `<voice-slug>.pth` (+ optional `.index`) per profile | `third_party/rvc-models` |
+| `RVC_F0_METHOD` / `RVC_TIMEOUT` | pitch extractor / timeout | `rmvpe` / `1800` |
+
+Train clone models only from licensed reference recordings (store provenance on the profile's `reference_audio`).
 
 ### 3) Start the worker
 

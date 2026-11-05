@@ -11,8 +11,8 @@ from django.core.files import File
 from django.db import transaction
 from django.utils import timezone
 
-from .models import DjMixJob, DjRenderJob, Song, Stem
-from .services import dj_tools, g2p, song_generator
+from .models import DjMixJob, DjRenderJob, Song, Stem, VoiceCloneJob
+from .services import audio_mixer, dj_tools, g2p, song_generator, voice_clone
 
 logger = logging.getLogger(__name__)
 WAVEFORM_BUCKETS = 256
@@ -275,5 +275,148 @@ def mix_tracks_task(self, job_id):
         DjMixJob.objects.filter(pk=job_id).update(
             status=DjMixJob.Status.FAILED,
             failure_reason="Mix render failed. Please retry later.",
+        )
+        raise
+
+
+def _song_audio_path(song):
+    """Copy a song's stored audio to a local temp file (caller deletes it)."""
+    return _file_field_to_temp(song.audio_file)
+
+
+def _file_field_to_temp(file_field):
+    """Copy any FileField's contents to a local temp file (caller deletes it)."""
+    suffix = os.path.splitext(file_field.name)[1] or ".wav"
+    with file_field.open("rb") as handle:
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temporary:
+            shutil.copyfileobj(handle, temporary)
+            return temporary.name
+
+
+@shared_task(bind=True, max_retries=1, name="music.clone_vocals")
+def clone_vocals_task(self, job_id):
+    """Convert a completed song's vocals into a target VoiceProfile (RVC)."""
+    try:
+        job = VoiceCloneJob.objects.select_related("source_song", "voice").get(pk=job_id)
+    except VoiceCloneJob.DoesNotExist:
+        return {"job_id": job_id, "status": "missing"}
+    if job.status == VoiceCloneJob.Status.COMPLETED:
+        return {"job_id": job_id, "status": job.status}
+    VoiceCloneJob.objects.filter(pk=job_id).update(
+        status=VoiceCloneJob.Status.PROCESSING,
+        task_id=self.request.id or "",
+        failure_reason="",
+    )
+    try:
+        cloner = voice_clone.get_voice_cloner()
+        source_path = _song_audio_path(job.source_song)
+        try:
+            with tempfile.TemporaryDirectory() as work_dir:
+                out_path = cloner.convert(
+                    Path(source_path), job.voice.slug, Path(work_dir), filename_hint=f"clone-{job.pk}"
+                )
+                waveform = _waveform(str(out_path))
+                with open(out_path, "rb") as handle:
+                    with transaction.atomic():
+                        job = VoiceCloneJob.objects.select_for_update().get(pk=job_id)
+                        job.output_file.save(f"clone-{job.pk}.wav", File(handle), save=False)
+                        job.status = VoiceCloneJob.Status.COMPLETED
+                        job.save(update_fields=["output_file", "status", "updated_at"])
+        finally:
+            os.unlink(source_path)
+        return {"job_id": job_id, "status": job.status, "output": job.output_file.name}
+    except Exception:
+        logger.exception("Voice cloning failed for job %s", job_id)
+        VoiceCloneJob.objects.filter(pk=job_id).update(
+            status=VoiceCloneJob.Status.FAILED,
+            failure_reason="Voice cloning failed. Please retry later.",
+        )
+        raise
+
+
+@shared_task(bind=True, max_retries=1, name="music.render_final_song")
+def render_final_song_task(self, song_id):
+    """Mix & master pipeline: align/stretch stems -> level/pan/width -> master.
+
+    Step 1: stem alignment & time-stretching (uploaded stems are stretched to
+            the longest stem when within a musical ratio, else padded).
+    Step 2: automated leveling (gain staging), per-stem EQ pockets, sidechain
+            compression (drums duck bass/melody, vocals duck melody),
+            constant-power panning and mid/side stereo width.
+    Step 3: master bus saturation, multiband compression, loudness
+            normalization to -14 LUFS and a -1 dBFS brickwall limiter.
+    """
+    try:
+        song = Song.objects.prefetch_related("stems").get(pk=song_id)
+    except Song.DoesNotExist:
+        return {"song_id": song_id, "status": "missing"}
+    if not song.audio_file and not song.stems.exists():
+        return {"song_id": song_id, "status": "no_audio"}
+    Song.objects.filter(pk=song_id).update(status=Song.Status.PROCESSING, failure_reason="")
+    try:
+        sample_rate = None
+        stem_rows = list(song.stems.all())
+        if stem_rows:
+            stems = []
+            for stem in stem_rows:
+                temp_path = _file_field_to_temp(stem.audio_file)
+                try:
+                    data, stem_rate = dj_tools.load_audio(temp_path)
+                finally:
+                    os.unlink(temp_path)
+                sample_rate = sample_rate or stem_rate
+                stems.append({
+                    "kind": stem.kind,
+                    "samples": data,
+                    "volume": stem.volume,
+                    "pan": stem.pan,
+                    "is_muted": stem.is_muted,
+                    "is_solo": stem.is_solo,
+                })
+        else:
+            # No stems yet: band-split the master so the pipeline always runs.
+            source_path = _song_audio_path(song)
+            try:
+                samples, sample_rate = dj_tools.load_audio(source_path)
+            finally:
+                os.unlink(source_path)
+            parts = dj_tools.split_stems_placeholder(samples, sample_rate)
+            stems = [
+                {"kind": kind, "samples": data, "volume": 1.0, "pan": 0.0, "is_muted": False, "is_solo": False}
+                for kind, data in parts.items()
+            ]
+
+        # Step 1: alignment & time-stretching to the longest stem.
+        target_length = max(stem["samples"].shape[1] for stem in stems)
+        for stem in stems:
+            length = stem["samples"].shape[1]
+            if 0 < length < target_length:
+                rate = length / target_length
+                if 0.5 <= rate <= 2.0:
+                    stem["samples"] = dj_tools.time_stretch(stem["samples"], rate)
+                else:
+                    stem["samples"] = dj_tools._match_length(stem["samples"], target_length)
+
+        # Steps 2 & 3: level/pan/width, then master to -14 LUFS.
+        mastered, report = audio_mixer.mix_and_master(stems, sample_rate, target_lufs=-14.0)
+
+        temporary_path = dj_tools.render_to_temp_file(mastered, sample_rate, ".wav")
+        try:
+            with open(temporary_path, "rb") as handle:
+                with transaction.atomic():
+                    song = Song.objects.select_for_update().get(pk=song_id)
+                    song.mastered_file.save(f"song-{song.pk}-master.wav", File(handle), save=False)
+                    song.mastering_report = report
+                    song.status = Song.Status.COMPLETED
+                    song.failure_reason = ""
+                    song.save(update_fields=["mastered_file", "mastering_report", "status", "failure_reason", "updated_at"])
+        finally:
+            os.unlink(temporary_path)
+        return {"song_id": song.pk, "status": song.status, "master": song.mastered_file.name, "report": report}
+    except Exception:
+        logger.exception("Mastering failed for song %s", song_id)
+        Song.objects.filter(pk=song_id).update(
+            status=Song.Status.FAILED,
+            failure_reason="Mastering failed. Please retry later.",
         )
         raise

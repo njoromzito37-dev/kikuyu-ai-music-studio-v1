@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import DjMixJob, DjRenderJob, Genre, Instrument, Song, Stem
+from .models import DjMixJob, DjRenderJob, Genre, Instrument, Song, Stem, VoiceCloneJob, VoiceProfile
 from .services.prompt_engine import KikuyuPromptEngine
 
 
@@ -8,6 +8,18 @@ class InstrumentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Instrument
         fields = ("id", "name", "slug", "category", "spectral_tags")
+
+
+class VoiceProfileSerializer(serializers.ModelSerializer):
+    has_reference_audio = serializers.SerializerMethodField()
+
+    class Meta:
+        model = VoiceProfile
+        fields = ("id", "name", "slug", "vocal_type", "description", "prompt_tags", "language", "has_reference_audio")
+        read_only_fields = fields
+
+    def get_has_reference_audio(self, obj):
+        return bool(obj.reference_audio)
 
 
 class GenreSerializer(serializers.ModelSerializer):
@@ -38,6 +50,9 @@ class GenerateSongSerializer(serializers.Serializer):
     lyrics = serializers.CharField(required=False, allow_blank=True, max_length=12000)
     language = serializers.ChoiceField(choices=("gikuyu", "swahili", "english"), default="gikuyu")
     genre = serializers.SlugRelatedField(slug_field="slug", queryset=Genre.objects.all(), required=False)
+    voice = serializers.SlugRelatedField(
+        slug_field="slug", queryset=VoiceProfile.objects.filter(is_active=True), required=False, allow_null=True
+    )
     mood = serializers.CharField(max_length=80, default="joyful")
     instruments = serializers.PrimaryKeyRelatedField(queryset=Instrument.objects.all(), many=True, required=False)
     duration = serializers.IntegerField(min_value=30, max_value=300, default=120)
@@ -62,6 +77,7 @@ class GenerateSongSerializer(serializers.Serializer):
         prompt = validated_data.pop("prompt")
         lyrics = validated_data.pop("lyrics", "")
         genre = validated_data["genre"]
+        voice = validated_data.get("voice")
         if not validated_data.get("title"):
             validated_data["title"] = prompt[:80] or "Untitled Song"
         composition = KikuyuPromptEngine().compose(
@@ -71,6 +87,7 @@ class GenerateSongSerializer(serializers.Serializer):
             language=validated_data["language"],
             mood=validated_data["mood"],
             lyrics=lyrics,
+            voice_tags=voice.prompt_tags if voice else "",
         )
         song = Song.objects.create(
             user=self.context["request"].user,
@@ -86,16 +103,18 @@ class GenerateSongSerializer(serializers.Serializer):
 
 class SongSerializer(serializers.ModelSerializer):
     genre = GenreSerializer(read_only=True)
+    voice = VoiceProfileSerializer(read_only=True)
     chosen_instruments = InstrumentSerializer(many=True, read_only=True)
     stems = StemSerializer(many=True, read_only=True)
     audio_url = serializers.SerializerMethodField()
+    mastered_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Song
         fields = (
             "id", "title", "user_prompt", "compiled_ai_prompt", "generated_lyrics", "lyrics_engine", "language", "mood",
-            "genre", "chosen_instruments", "stems", "status", "audio_url", "duration", "tempo_bpm",
-            "musical_key", "camelot", "cue_points",
+            "genre", "voice", "chosen_instruments", "stems", "status", "audio_url", "mastered_url", "mastering_report",
+            "duration", "tempo_bpm", "musical_key", "camelot", "cue_points",
             "audio_waveform_data", "failure_reason", "created_at", "updated_at",
         )
         read_only_fields = fields
@@ -105,6 +124,13 @@ class SongSerializer(serializers.ModelSerializer):
             return None
         request = self.context.get("request")
         url = obj.audio_file.url
+        return request.build_absolute_uri(url) if request else url
+
+    def get_mastered_url(self, obj):
+        if not obj.mastered_file:
+            return None
+        request = self.context.get("request")
+        url = obj.mastered_file.url
         return request.build_absolute_uri(url) if request else url
 
 
@@ -206,3 +232,37 @@ class DjMixJobCreateSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         return DjMixJob.objects.create(user=self.context["request"].user, **validated_data)
+
+
+class VoiceCloneJobSerializer(serializers.ModelSerializer):
+    voice = VoiceProfileSerializer(read_only=True)
+    output_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = VoiceCloneJob
+        fields = ("id", "source_song", "voice", "status", "output_url", "failure_reason", "created_at", "updated_at")
+        read_only_fields = fields
+
+    def get_output_url(self, obj):
+        return _absolute_file_url(self, obj, "output_file")
+
+
+class VoiceCloneJobCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = VoiceCloneJob
+        fields = ("source_song", "voice")
+
+    def validate_source_song(self, song):
+        if song.user_id != self.context["request"].user.id:
+            raise serializers.ValidationError("You can only clone your own songs.")
+        if song.status != Song.Status.COMPLETED or not song.audio_file:
+            raise serializers.ValidationError("Song must be completed with audio before voice cloning.")
+        return song
+
+    def validate_voice(self, voice):
+        if not voice.is_active:
+            raise serializers.ValidationError("This voice profile is not active.")
+        return voice
+
+    def create(self, validated_data):
+        return VoiceCloneJob.objects.create(user=self.context["request"].user, **validated_data)

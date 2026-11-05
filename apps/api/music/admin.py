@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 
-from .models import DjMixJob, DjRenderJob, Genre, Instrument, Song, Stem, User
+from .models import DjMixJob, DjRenderJob, Genre, Instrument, Song, Stem, User, VoiceCloneJob, VoiceProfile
 
 
 @admin.register(User)
@@ -50,4 +50,19 @@ class DjRenderJobAdmin(admin.ModelAdmin):
 class DjMixJobAdmin(admin.ModelAdmin):
     list_display = ("id", "user", "track_a", "track_b", "transition", "status", "created_at")
     list_filter = ("status", "transition", "created_at")
+    readonly_fields = ("created_at", "updated_at")
+
+
+@admin.register(VoiceProfile)
+class VoiceProfileAdmin(admin.ModelAdmin):
+    list_display = ("name", "vocal_type", "language", "is_active")
+    prepopulated_fields = {"slug": ("name",)}
+    list_filter = ("vocal_type", "is_active")
+    search_fields = ("name",)
+
+
+@admin.register(VoiceCloneJob)
+class VoiceCloneJobAdmin(admin.ModelAdmin):
+    list_display = ("id", "user", "source_song", "voice", "status", "created_at")
+    list_filter = ("status", "created_at")
     readonly_fields = ("created_at", "updated_at")

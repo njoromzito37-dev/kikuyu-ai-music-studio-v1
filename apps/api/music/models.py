@@ -44,6 +44,39 @@ class Instrument(models.Model):
         return self.name
 
 
+class VoiceProfile(models.Model):
+    """Selectable vocal profile (male / female / child / choir / duet).
+
+    prompt_tags steer the generator's vocal rendering; reference_audio holds
+    the licensed recordings used to train this profile's RVC clone model.
+    """
+
+    class VocalType(models.TextChoices):
+        MALE_LEAD = "male_lead", "Male Lead"
+        FEMALE_LEAD = "female_lead", "Female Lead"
+        CHILD = "child", "Child Soloist"
+        CHILDREN_CHOIR = "children_choir", "Children's Choir"
+        MALE_CHOIR = "male_choir", "Male Choir"
+        FEMALE_CHOIR = "female_choir", "Female Choir"
+        MIXED_CHOIR = "mixed_choir", "Mixed Choir"
+        DUET = "duet", "Duet"
+
+    name = models.CharField(max_length=120, unique=True)
+    slug = models.SlugField(max_length=120, unique=True)
+    vocal_type = models.CharField(max_length=20, choices=VocalType.choices)
+    description = models.TextField(blank=True)
+    prompt_tags = models.TextField(help_text="Vocal description injected into generation prompts")
+    reference_audio = models.FileField(upload_to="voices/reference/", blank=True)
+    language = models.CharField(max_length=16, default="gikuyu")
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+
 class Song(models.Model):
     class Status(models.TextChoices):
         PENDING = "PENDING", "Pending"
@@ -64,9 +97,12 @@ class Song(models.Model):
     language = models.CharField(max_length=16, default="gikuyu")
     mood = models.CharField(max_length=80, default="joyful")
     genre = models.ForeignKey(Genre, on_delete=models.PROTECT, related_name="songs")
+    voice = models.ForeignKey("VoiceProfile", on_delete=models.SET_NULL, null=True, blank=True, related_name="songs")
     chosen_instruments = models.ManyToManyField(Instrument, blank=True, related_name="songs")
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING, db_index=True)
     audio_file = models.FileField(upload_to="generated/%Y/%m/%d/", blank=True)
+    mastered_file = models.FileField(upload_to="mastered/%Y/%m/%d/", blank=True, help_text="Broadcast-mastered render (-14 LUFS)")
+    mastering_report = models.JSONField(default=dict, blank=True, help_text="Level/loudness report from the mastering chain")
     duration = models.PositiveSmallIntegerField(default=120, validators=[MinValueValidator(30), MaxValueValidator(300)])
     tempo_bpm = models.PositiveSmallIntegerField(null=True, blank=True, validators=[MinValueValidator(30), MaxValueValidator(300)])
     musical_key = models.CharField(max_length=16, blank=True, help_text='Detected key, e.g. "A minor"')
@@ -179,3 +215,29 @@ class DjMixJob(models.Model):
 
     def __str__(self):
         return f"mix:{self.pk} {self.track_a_id}->{self.track_b_id} ({self.status})"
+
+
+class VoiceCloneJob(models.Model):
+    """Convert a completed song's vocals into a target VoiceProfile."""
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        PROCESSING = "PROCESSING", "Processing"
+        COMPLETED = "COMPLETED", "Completed"
+        FAILED = "FAILED", "Failed"
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="voice_clones")
+    source_song = models.ForeignKey(Song, on_delete=models.CASCADE, related_name="voice_clones")
+    voice = models.ForeignKey(VoiceProfile, on_delete=models.PROTECT, related_name="clone_jobs")
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING, db_index=True)
+    output_file = models.FileField(upload_to="voices/cloned/%Y/%m/%d/", blank=True)
+    failure_reason = models.TextField(blank=True)
+    task_id = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"clone:{self.pk} song={self.source_song_id} voice={self.voice_id} ({self.status})"

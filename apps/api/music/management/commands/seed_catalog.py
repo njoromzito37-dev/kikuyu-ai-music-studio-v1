@@ -1,6 +1,7 @@
 from django.core.management.base import BaseCommand
 
-from music.models import Genre, Instrument
+from music.models import Genre, Instrument, VoiceProfile
+from music.services.voices import VOICE_CATALOG
 
 
 GENRES = [
@@ -112,4 +113,19 @@ class Command(BaseCommand):
                     "prompt_description": name,
                 },
             )
-        self.stdout.write(self.style.SUCCESS(f"Loaded {len(GENRES)} genres and {len(INSTRUMENTS)} instruments."))
+        for voice in VOICE_CATALOG:
+            VoiceProfile.objects.update_or_create(
+                slug=voice["slug"],
+                defaults={
+                    "name": voice["name"],
+                    "vocal_type": voice["vocal_type"],
+                    "description": voice["description"],
+                    "prompt_tags": voice["prompt_tags"],
+                    "is_active": True,
+                },
+            )
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"Loaded {len(GENRES)} genres, {len(INSTRUMENTS)} instruments, and {len(VOICE_CATALOG)} voice profiles."
+            )
+        )

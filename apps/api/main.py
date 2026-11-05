@@ -11,6 +11,7 @@ from mugithi_engine import INSTRUMENT_CATALOG, reference_notes, render_song
 from suno_client import SUNO_FUNCTIONS, SunoClient, SunoError
 
 from music.services.lyricist import ThematicLyricist
+from music.services.voices import get_voice, voice_options
 
 app = FastAPI(title="Kikuyu AI Music Studio API", version="0.1.0")
 
@@ -87,6 +88,7 @@ class GenerateSongRequest(BaseModel):
     genre: str = Field(default="mugithi", description="Desired music genre")
     mood: str = Field(default="joyful", description="Mood of the song")
     instruments: Optional[List[str]] = Field(default_factory=lambda: ["acoustic guitar", "bass"])
+    voice: Optional[str] = Field(default=None, description="Voice profile slug (male/female/child/choir...); see /voices")
     duration_sec: int = Field(default=120, ge=30, le=300)
 
 
@@ -120,6 +122,7 @@ class JobStatusResponse(BaseModel):
     references: List[str] = []
     engine: str = "local"
     lyrics_engine: str = "template"
+    voice: Optional[str] = None
     suno_task_id: Optional[str] = None
     detail: str = ""
 
@@ -295,6 +298,12 @@ def generate_song(req: GenerateSongRequest, background_tasks: BackgroundTasks):
         raise HTTPException(status_code=400, detail="Prompt is required.")
     if req.language.lower() not in {"gikuyu", "swahili", "english"}:
         raise HTTPException(status_code=400, detail="Unsupported language.")
+    voice_slug = (req.voice or "").strip().lower()
+    voice_profile = None
+    if voice_slug:
+        voice_profile = get_voice(voice_slug)
+        if voice_profile is None:
+            raise HTTPException(status_code=400, detail=f"Unknown voice profile {voice_slug!r}. See GET /voices.")
 
     job_id = str(uuid.uuid4())
     topic = (req.topic or "").strip() or req.prompt
@@ -315,6 +324,9 @@ def generate_song(req: GenerateSongRequest, background_tasks: BackgroundTasks):
         "style_prompt": (req.style_prompt or "").strip(),
         "vocal_dynamics": (req.vocal_dynamics or "").strip(),
         "percussion_pattern": (req.percussion_pattern or "").strip(),
+        "voice": voice_slug or None,
+        "vocal_type": voice_profile["vocal_type"] if voice_profile else "",
+        "voice_prompt": voice_profile["prompt_tags"] if voice_profile else "",
     }
 
     # In production, this would publish to Celery / Redis.
@@ -329,6 +341,7 @@ def generate_song(req: GenerateSongRequest, background_tasks: BackgroundTasks):
         "references": reference_notes(req.genre),
         "engine": "suno" if SunoClient.from_env() else "local",
         "lyrics_engine": lyrics_engine,
+        "voice": voice_slug or None,
         "suno_task_id": None,
         "title": (req.topic or "").strip() or req.prompt[:60],
         "genre": req.genre,
@@ -340,6 +353,7 @@ def generate_song(req: GenerateSongRequest, background_tasks: BackgroundTasks):
             "language": req.language,
             "genre": req.genre,
             "mood": req.mood,
+            "voice": voice_slug or None,
             "instruments": req.instruments or [],
             "duration_sec": req.duration_sec,
         },
@@ -382,6 +396,8 @@ def _render_job_suno(job, suno: SunoClient) -> None:
             r.split(": ", 1)[-1] for r in job["references"][:2]
         )
     )
+    if payload.get("voice_prompt"):
+        style += f", {payload['voice_prompt']}"
     title = payload["prompt"][:80]
     result = suno.generate_custom(prompt=payload["lyrics"], style=style, title=title)
     task_id = result.get("taskId")
@@ -430,6 +446,12 @@ def list_instruments():
             for slug, meta in INSTRUMENT_CATALOG.items()
         ]
     }
+
+
+@app.get("/voices")
+def list_voices():
+    """Vocal profiles for generation: male/female/child/choir leads and ensembles."""
+    return {"voices": voice_options()}
 
 
 @app.get("/suno/enabled")
@@ -814,6 +836,7 @@ def get_job(job_id: str):
         references=job.get("references", []),
         engine=job.get("engine", "local"),
         lyrics_engine=job.get("lyrics_engine", "template"),
+        voice=job.get("voice"),
         suno_task_id=job.get("suno_task_id"),
         detail=job.get("detail") or ("Audio output ready." if job["status"] == "completed" else "Generation in progress."),
     )

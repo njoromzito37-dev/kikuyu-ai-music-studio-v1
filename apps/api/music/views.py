@@ -5,7 +5,7 @@ from rest_framework.exceptions import APIException
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import DjMixJob, DjRenderJob, Genre, Song, Stem
+from .models import DjMixJob, DjRenderJob, Genre, Song, Stem, VoiceCloneJob, VoiceProfile
 from .serializers import (
     DjMixJobCreateSerializer,
     DjMixJobSerializer,
@@ -15,8 +15,19 @@ from .serializers import (
     GenreSerializer,
     SongSerializer,
     StemSerializer,
+    VoiceCloneJobCreateSerializer,
+    VoiceCloneJobSerializer,
+    VoiceProfileSerializer,
 )
-from .tasks import analyze_song_task, generate_song_task, mix_tracks_task, process_audio_task, split_song_stems_task
+from .tasks import (
+    analyze_song_task,
+    clone_vocals_task,
+    generate_song_task,
+    mix_tracks_task,
+    process_audio_task,
+    render_final_song_task,
+    split_song_stems_task,
+)
 
 
 class GenerationQueueUnavailable(APIException):
@@ -77,6 +88,20 @@ class AnalyzeSongView(APIView):
         except Exception as exc:
             raise GenerationQueueUnavailable() from exc
         return Response({"detail": "Analysis queued."}, status=status.HTTP_202_ACCEPTED)
+
+
+class MasterSongView(APIView):
+    """Queue the mix-and-master pipeline (gain staging, sidechain, -14 LUFS)."""
+
+    def post(self, request, pk):
+        song = get_object_or_404(Song, pk=pk, user=request.user)
+        if not song.audio_file and not song.stems.exists():
+            return Response({"detail": "Song has no audio or stems to master."}, status=status.HTTP_409_CONFLICT)
+        try:
+            render_final_song_task.delay(song.pk)
+        except Exception as exc:
+            raise GenerationQueueUnavailable() from exc
+        return Response({"detail": "Mastering queued."}, status=status.HTTP_202_ACCEPTED)
 
 
 class SongStemListView(generics.ListAPIView):
@@ -176,3 +201,44 @@ class DjMixDetailView(generics.RetrieveAPIView):
 
     def get_queryset(self):
         return DjMixJob.objects.filter(user=self.request.user).select_related("track_a", "track_b")
+
+
+class VoiceListView(generics.ListAPIView):
+    """Active vocal profiles (male / female / child / choirs / duet)."""
+
+    queryset = VoiceProfile.objects.filter(is_active=True)
+    serializer_class = VoiceProfileSerializer
+
+
+class VoiceCloneJobListCreateView(generics.ListCreateAPIView):
+    """GET lists the user's voice-clone jobs; POST queues a vocal conversion."""
+
+    def get_queryset(self):
+        return VoiceCloneJob.objects.filter(user=self.request.user).select_related("voice", "source_song")
+
+    def get_serializer_class(self):
+        if self.request.method == "POST":
+            return VoiceCloneJobCreateSerializer
+        return VoiceCloneJobSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        with transaction.atomic():
+            job = serializer.save()
+        try:
+            clone_vocals_task.delay(job.pk)
+        except Exception as exc:
+            VoiceCloneJob.objects.filter(pk=job.pk).update(
+                status=VoiceCloneJob.Status.FAILED,
+                failure_reason="Voice-clone queue is temporarily unavailable.",
+            )
+            raise GenerationQueueUnavailable() from exc
+        return Response(VoiceCloneJobSerializer(job, context={"request": request}).data, status=status.HTTP_202_ACCEPTED)
+
+
+class VoiceCloneJobDetailView(generics.RetrieveAPIView):
+    serializer_class = VoiceCloneJobSerializer
+
+    def get_queryset(self):
+        return VoiceCloneJob.objects.filter(user=self.request.user).select_related("voice", "source_song")

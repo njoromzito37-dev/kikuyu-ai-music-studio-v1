@@ -112,3 +112,11 @@ YUE_STAGE2_MODEL = os.environ.get("YUE_STAGE2_MODEL", "m-a-p/YuE-s2-1B-general")
 YUE_MAX_NEW_TOKENS = int(os.environ.get("YUE_MAX_NEW_TOKENS", "4800"))
 YUE_CUDA_IDX = os.environ.get("YUE_CUDA_IDX", "0")
 YUE_TIMEOUT = int(os.environ.get("YUE_TIMEOUT", "3600"))
+
+# Singing-voice cloning (voice conversion): "off" or "rvc"
+VOICE_CLONER = os.environ.get("VOICE_CLONER", "off")
+RVC_REPO_DIR = os.environ.get("RVC_REPO_DIR", str(BASE_DIR.parent.parent / "third_party" / "Retrieval-based-Voice-Conversion-WebUI"))
+RVC_MODEL_DIR = os.environ.get("RVC_MODEL_DIR", str(BASE_DIR.parent.parent / "third_party" / "rvc-models"))
+RVC_INFER_SCRIPT = os.environ.get("RVC_INFER_SCRIPT", "")
+RVC_F0_METHOD = os.environ.get("RVC_F0_METHOD", "rmvpe")
+RVC_TIMEOUT = int(os.environ.get("RVC_TIMEOUT", "1800"))

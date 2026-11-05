@@ -2,6 +2,7 @@ import logging
 import re
 import unicodedata
 
+from .instrument_catalog import describe_instrument
 from .lyricist import ThematicLyricist
 
 logger = logging.getLogger(__name__)
@@ -61,7 +62,7 @@ class KikuyuPromptEngine:
 
     max_prompt_tokens = 512
 
-    def compose(self, text_prompt, genre, instruments=None, language="gikuyu", mood="joyful", lyrics=""):
+    def compose(self, text_prompt, genre, instruments=None, language="gikuyu", mood="joyful", lyrics="", voice_tags=""):
         prompt = unicodedata.normalize("NFC", text_prompt).strip()
         if not prompt:
             raise ValueError("A non-empty music prompt is required.")
@@ -74,7 +75,10 @@ class KikuyuPromptEngine:
         for name in instrument_names:
             normalized = unicodedata.normalize("NFC", name).strip()
             slug = re.sub(r"[^a-z0-9]+", "-", normalized.lower()).strip("-")
-            instrument_descriptions.append(INSTRUMENT_PROMPTS.get(slug, INSTRUMENT_PROMPTS.get(normalized.lower(), normalized)))
+            description = INSTRUMENT_PROMPTS.get(slug) or INSTRUMENT_PROMPTS.get(normalized.lower())
+            if description is None:
+                description = describe_instrument(normalized)
+            instrument_descriptions.append(description)
 
         sections = [
             f"Create an original song. Style: {genre_style}.",
@@ -82,6 +86,9 @@ class KikuyuPromptEngine:
             f"Creative direction: {prompt}",
             f"Language: {language}; preserve Gĩkũyũ orthography and diacritics (ĩ, ũ, ã, ẽ, õ) exactly.",
         ]
+        voice_tags = unicodedata.normalize("NFC", voice_tags or "").strip()
+        if voice_tags:
+            sections.append(f"Vocals: {voice_tags}.")
         if instrument_descriptions:
             sections.append("Instrumentation: " + ", ".join(instrument_descriptions) + ".")
         compiled_prompt = " ".join(sections).split()[: self.max_prompt_tokens]

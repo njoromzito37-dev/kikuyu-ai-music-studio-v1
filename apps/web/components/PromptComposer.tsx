@@ -30,6 +30,8 @@ export default function PromptComposer() {
   const [language, setLanguage] = useState("gikuyu");
   const [genre, setGenre] = useState("mugithi");
   const [mood, setMood] = useState("romantic");
+  const [voice, setVoice] = useState("mugithi-male-lead");
+  const [voiceOptions, setVoiceOptions] = useState<{ slug: string; name: string; vocal_type: string; description: string }[]>([]);
   const [instruments, setInstruments] = useState(["acoustic guitar", "bass"]);
   const [loading, setLoading] = useState(false);
   const [lyricsLoading, setLyricsLoading] = useState(false);
@@ -56,6 +58,10 @@ export default function PromptComposer() {
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => data && setInstrumentCatalog(data.instruments ?? []))
       .catch(() => setInstrumentCatalog([]));
+    fetch(`${API_BASE}/voices`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => data && setVoiceOptions(data.voices ?? []))
+      .catch(() => setVoiceOptions([]));
   }, []);
 
   const toggleInstrument = (instrument: string) => {
@@ -168,6 +174,7 @@ export default function PromptComposer() {
           language,
           genre,
           mood,
+          voice,
           instruments,
           duration_sec: 120,
         }),
@@ -197,6 +204,7 @@ export default function PromptComposer() {
       setLanguage(req.language ?? "gikuyu");
       setGenre(req.genre ?? "mugithi");
       setMood(req.mood ?? "joyful");
+      setVoice(req.voice ?? "mugithi-male-lead");
       setInstruments(Array.isArray(req.instruments) ? req.instruments : []);
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (error) {
@@ -300,6 +308,23 @@ export default function PromptComposer() {
                 {genreOptions.map((option) => (
                   <option key={option} value={option}>
                     {option}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm text-slate-300">Voice</label>
+              <select
+                value={voice}
+                onChange={(e) => setVoice(e.target.value)}
+                title="Vocal profile — male, female, child, choir…"
+                className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-white outline-none focus:border-emerald-500"
+              >
+                {voiceOptions.length === 0 && <option value={voice}>{voice}</option>}
+                {voiceOptions.map((option) => (
+                  <option key={option.slug} value={option.slug} title={option.description}>
+                    {option.name}
                   </option>
                 ))}
               </select>
