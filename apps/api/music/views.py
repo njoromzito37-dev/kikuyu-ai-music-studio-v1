@@ -5,9 +5,18 @@ from rest_framework.exceptions import APIException
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Genre, Song
-from .serializers import GenerateSongSerializer, GenreSerializer, SongSerializer
-from .tasks import generate_song_task
+from .models import DjMixJob, DjRenderJob, Genre, Song, Stem
+from .serializers import (
+    DjMixJobCreateSerializer,
+    DjMixJobSerializer,
+    DjRenderJobCreateSerializer,
+    DjRenderJobSerializer,
+    GenerateSongSerializer,
+    GenreSerializer,
+    SongSerializer,
+    StemSerializer,
+)
+from .tasks import analyze_song_task, generate_song_task, mix_tracks_task, process_audio_task, split_song_stems_task
 
 
 class GenerationQueueUnavailable(APIException):
@@ -54,3 +63,116 @@ class SongDetailView(generics.RetrieveAPIView):
 class GenreListView(generics.ListAPIView):
     queryset = Genre.objects.all()
     serializer_class = GenreSerializer
+
+
+class AnalyzeSongView(APIView):
+    """Queue BPM/key/cue-point analysis for a song's audio."""
+
+    def post(self, request, pk):
+        song = get_object_or_404(Song, pk=pk, user=request.user)
+        if not song.audio_file:
+            return Response({"detail": "Song has no audio to analyze yet."}, status=status.HTTP_409_CONFLICT)
+        try:
+            analyze_song_task.delay(song.pk)
+        except Exception as exc:
+            raise GenerationQueueUnavailable() from exc
+        return Response({"detail": "Analysis queued."}, status=status.HTTP_202_ACCEPTED)
+
+
+class SongStemListView(generics.ListAPIView):
+    serializer_class = StemSerializer
+
+    def get_queryset(self):
+        return Stem.objects.filter(song_id=self.kwargs["pk"], song__user=self.request.user).order_by("kind")
+
+
+class SongStemAutoSplitView(APIView):
+    """Queue automatic stem separation (vocals / bass / drums / melody)."""
+
+    def post(self, request, pk):
+        song = get_object_or_404(Song, pk=pk, user=request.user)
+        if not song.audio_file:
+            return Response({"detail": "Song has no audio to split yet."}, status=status.HTTP_409_CONFLICT)
+        try:
+            split_song_stems_task.delay(song.pk)
+        except Exception as exc:
+            raise GenerationQueueUnavailable() from exc
+        return Response({"detail": "Stem separation queued."}, status=status.HTTP_202_ACCEPTED)
+
+
+class StemDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """Read / mix-state update (mute, solo, volume, pan) / delete a stem."""
+
+    serializer_class = StemSerializer
+    http_method_names = ["get", "patch", "delete", "head", "options"]
+
+    def get_queryset(self):
+        return Stem.objects.filter(song__user=self.request.user).select_related("song")
+
+
+class DjRenderListCreateView(generics.ListCreateAPIView):
+    """GET lists the user's DSP renders; POST queues a new effects-chain render."""
+
+    def get_queryset(self):
+        return DjRenderJob.objects.filter(user=self.request.user).select_related("source_song")
+
+    def get_serializer_class(self):
+        if self.request.method == "POST":
+            return DjRenderJobCreateSerializer
+        return DjRenderJobSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        with transaction.atomic():
+            job = serializer.save()
+        try:
+            process_audio_task.delay(job.pk)
+        except Exception as exc:
+            DjRenderJob.objects.filter(pk=job.pk).update(
+                status=DjRenderJob.Status.FAILED,
+                failure_reason="Render queue is temporarily unavailable.",
+            )
+            raise GenerationQueueUnavailable() from exc
+        return Response(DjRenderJobSerializer(job, context={"request": request}).data, status=status.HTTP_202_ACCEPTED)
+
+
+class DjRenderDetailView(generics.RetrieveAPIView):
+    serializer_class = DjRenderJobSerializer
+
+    def get_queryset(self):
+        return DjRenderJob.objects.filter(user=self.request.user)
+
+
+class DjMixListCreateView(generics.ListCreateAPIView):
+    """GET lists the user's mixes; POST queues an automated mashup/transition."""
+
+    def get_queryset(self):
+        return DjMixJob.objects.filter(user=self.request.user).select_related("track_a", "track_b")
+
+    def get_serializer_class(self):
+        if self.request.method == "POST":
+            return DjMixJobCreateSerializer
+        return DjMixJobSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        with transaction.atomic():
+            job = serializer.save()
+        try:
+            mix_tracks_task.delay(job.pk)
+        except Exception as exc:
+            DjMixJob.objects.filter(pk=job.pk).update(
+                status=DjMixJob.Status.FAILED,
+                failure_reason="Mix queue is temporarily unavailable.",
+            )
+            raise GenerationQueueUnavailable() from exc
+        return Response(DjMixJobSerializer(job, context={"request": request}).data, status=status.HTTP_202_ACCEPTED)
+
+
+class DjMixDetailView(generics.RetrieveAPIView):
+    serializer_class = DjMixJobSerializer
+
+    def get_queryset(self):
+        return DjMixJob.objects.filter(user=self.request.user).select_related("track_a", "track_b")

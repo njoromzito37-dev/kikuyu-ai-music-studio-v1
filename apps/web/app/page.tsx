@@ -1,3 +1,4 @@
+import DjBooth from "@/components/dj/DjBooth";
 import PromptComposer from "@/components/PromptComposer";
 
 export default function Home() {
@@ -15,6 +16,10 @@ export default function Home() {
         </header>
 
         <PromptComposer />
+
+        <hr className="my-10 border-slate-800" />
+
+        <DjBooth />
       </div>
     </main>
   );

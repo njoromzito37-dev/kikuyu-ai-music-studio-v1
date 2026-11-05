@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 
-from .models import Genre, Instrument, Song, User
+from .models import DjMixJob, DjRenderJob, Genre, Instrument, Song, Stem, User
 
 
 @admin.register(User)
@@ -26,7 +26,28 @@ class InstrumentAdmin(admin.ModelAdmin):
 
 @admin.register(Song)
 class SongAdmin(admin.ModelAdmin):
-    list_display = ("title", "user", "genre", "status", "created_at")
+    list_display = ("title", "user", "genre", "status", "tempo_bpm", "musical_key", "created_at")
     list_filter = ("status", "genre", "created_at")
     search_fields = ("title", "user__username")
+    readonly_fields = ("created_at", "updated_at")
+
+
+@admin.register(Stem)
+class StemAdmin(admin.ModelAdmin):
+    list_display = ("song", "kind", "volume", "pan", "is_muted", "is_solo", "updated_at")
+    list_filter = ("kind", "is_muted", "is_solo")
+    search_fields = ("song__title",)
+
+
+@admin.register(DjRenderJob)
+class DjRenderJobAdmin(admin.ModelAdmin):
+    list_display = ("id", "user", "source_song", "status", "created_at")
+    list_filter = ("status", "created_at")
+    readonly_fields = ("created_at", "updated_at")
+
+
+@admin.register(DjMixJob)
+class DjMixJobAdmin(admin.ModelAdmin):
+    list_display = ("id", "user", "track_a", "track_b", "transition", "status", "created_at")
+    list_filter = ("status", "transition", "created_at")
     readonly_fields = ("created_at", "updated_at")
