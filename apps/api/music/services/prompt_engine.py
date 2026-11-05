@@ -1,5 +1,10 @@
+import logging
 import re
 import unicodedata
+
+from .lyricist import ThematicLyricist
+
+logger = logging.getLogger(__name__)
 
 
 GENRE_STYLES = {
@@ -80,8 +85,44 @@ class KikuyuPromptEngine:
         if instrument_descriptions:
             sections.append("Instrumentation: " + ", ".join(instrument_descriptions) + ".")
         compiled_prompt = " ".join(sections).split()[: self.max_prompt_tokens]
-        structured_lyrics = self.structure_lyrics(lyrics, language, prompt, genre_slug)
-        return {"compiled_ai_prompt": " ".join(compiled_prompt), "generated_lyrics": structured_lyrics}
+        structured_lyrics, lyrics_engine = self._thematic_lyrics(
+            lyrics=lyrics,
+            language=language,
+            prompt=prompt,
+            genre_slug=genre_slug,
+            genre_style=genre_style,
+            mood=mood,
+            instrument_names=instrument_names,
+        )
+        return {
+            "compiled_ai_prompt": " ".join(compiled_prompt),
+            "generated_lyrics": structured_lyrics,
+            "lyrics_engine": lyrics_engine,
+        }
+
+    def _thematic_lyrics(self, lyrics, language, prompt, genre_slug, genre_style, mood, instrument_names):
+        """LLM-authored thematic lyrics when a provider is configured; templates otherwise.
+
+        Returns (structured_lyrics, engine) where engine is one of
+        user | deepseek | gemini | template.
+        """
+        if lyrics and lyrics.strip():
+            return self.structure_lyrics(lyrics, language, prompt, genre_slug), "user"
+        try:
+            result = ThematicLyricist().generate(
+                theme=prompt,
+                language=language,
+                genre_style=genre_style,
+                mood=mood,
+                instruments=instrument_names,
+            )
+        except Exception:  # pragma: no cover - never let LLM issues break generation
+            logger.exception("Thematic lyricist failed; falling back to template lyrics")
+            result = None
+        if result:
+            llm_lyrics, provider = result
+            return self.structure_lyrics(llm_lyrics, language, prompt, genre_slug), provider
+        return self.structure_lyrics("", language, prompt, genre_slug), "template"
 
     @staticmethod
     def infer_genre_slug(text):

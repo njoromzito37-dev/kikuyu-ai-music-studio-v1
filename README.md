@@ -5,6 +5,8 @@ A Suno-style AI music generation platform for Gĩkũyũ language and Kenyan musi
 ## Features
 
 - Prompt-based song generation (Suno AI when `SUNO_API_KEY` is set, local Mũgithi engine otherwise)
+- **Thematic lyric intelligence**: DeepSeek / Gemini write full, theme-driven lyrics from your prompt (Gĩkũyũ orthography preserved), with automatic fallback to built-in templates when no LLM key is configured
+- DJ & live-mixing suite: dual-deck Web Audio booth (cue, pitch-bend, tempo sync, 4/8-beat loops, 3-band EQ, filter sweep), stem mute/solo/volume, BPM + key (Camelot) analysis, auto cue points, and an automated mashup/transition engine (`/api/dj/mix/`)
 - Full Suno function set via `/suno/*`: generate, lyrics, extend, cover, upload-extend/cover, add-vocals/instrumental, stems, convert-wav, timestamped lyrics, concat, mashup, persona, boost-style, status, quota
 - Gĩkũyũ, Swahili, and English lyric support
 - Genre presets for Mugithi, Gospel/Kĩrooko, Benga, Mwomboko, Afro-pop, and Acoustic Folk
@@ -91,7 +93,22 @@ celery -A config worker --loglevel=info
 
 The DRF endpoints are `POST /api/generate/`, `GET /api/songs/?genre=mugithi`, `GET /api/songs/<id>/`, and `GET /api/genres/`. They require an authenticated Django user. Configure TLS and a production authentication backend before exposing the API. `GENERATION_BACKEND_URL` must point to a synchronous provider endpoint that accepts the task JSON and returns either audio bytes or JSON containing an `audio_url`; generated audio is limited by `GENERATION_MAX_AUDIO_BYTES`. Install `ffmpeg` on workers to populate waveform data; waveform extraction is skipped when it is unavailable. Configure Django's `STORAGES` for S3-compatible media storage in production.
 
-The built-in lyric composer structures supplied lyrics and provides deterministic starter templates. It is not a translation or language-model service; connect a Gĩkũyũ-capable text model if fluent, prompt-specific lyrics are required.
+### AI lyric intelligence (DeepSeek / Gemini)
+
+Both backends write lyrics through `music/services/lyricist.py` (`ThematicLyricist`). Given the user's prompt it produces complete, theme-driven song lyrics with correct Gĩkũyũ diacritics and section tags, then falls back to the deterministic templates when no provider is configured or reachable. Provenance is tracked per song (`lyrics_engine`: `template` | `user` | `deepseek` | `gemini`) and returned by the APIs.
+
+Configure via environment variables (repo-root `.env`):
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `DEEPSEEK_API_KEY` | DeepSeek API key (api.deepseek.com) | unset |
+| `GEMINI_API_KEY` | Google AI Studio key | unset |
+| `LLM_PROVIDER` | `auto` (DeepSeek→Gemini), `deepseek`, `gemini`, or `off` | `auto` |
+| `DEEPSEEK_MODEL` | DeepSeek model id | `deepseek-chat` |
+| `GEMINI_MODEL` | Gemini model id | `gemini-2.0-flash` |
+| `LLM_TIMEOUT` | request timeout seconds | `30` |
+
+No new Python dependencies are required (uses `requests`).
 
 ### 3) Start the worker
 

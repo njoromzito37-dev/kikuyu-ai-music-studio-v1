@@ -77,6 +77,7 @@ class GenerateSongSerializer(serializers.Serializer):
             user_prompt=prompt,
             compiled_ai_prompt=composition["compiled_ai_prompt"],
             generated_lyrics=composition["generated_lyrics"],
+            lyrics_engine=composition.get("lyrics_engine", "template"),
             **validated_data,
         )
         song.chosen_instruments.set(instruments)
@@ -92,7 +93,7 @@ class SongSerializer(serializers.ModelSerializer):
     class Meta:
         model = Song
         fields = (
-            "id", "title", "user_prompt", "compiled_ai_prompt", "generated_lyrics", "language", "mood",
+            "id", "title", "user_prompt", "compiled_ai_prompt", "generated_lyrics", "lyrics_engine", "language", "mood",
             "genre", "chosen_instruments", "stems", "status", "audio_url", "duration", "tempo_bpm",
             "musical_key", "camelot", "cue_points",
             "audio_waveform_data", "failure_reason", "created_at", "updated_at",

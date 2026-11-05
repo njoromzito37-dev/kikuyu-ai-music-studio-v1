@@ -10,6 +10,8 @@ import uuid
 from mugithi_engine import INSTRUMENT_CATALOG, reference_notes, render_song
 from suno_client import SUNO_FUNCTIONS, SunoClient, SunoError
 
+from music.services.lyricist import ThematicLyricist
+
 app = FastAPI(title="Kikuyu AI Music Studio API", version="0.1.0")
 
 frontend_origin = os.getenv("FRONTEND_ORIGIN", "http://localhost:3000")
@@ -43,6 +45,33 @@ def generate_lyrics_from_topic(topic: str, language: str = "gikuyu", genre: str 
     return lyrics
 
 
+def thematic_lyrics(topic: str, language: str = "gikuyu", genre: str = "mugithi", mood: str = "joyful"):
+    """LLM-authored thematic lyrics (DeepSeek / Gemini) with template fallback.
+
+    Returns (lyrics, engine) where engine is deepseek | gemini | template.
+    The LLM writes a full song that develops the theme; when no provider is
+    configured or reachable, the deterministic template catalog is used.
+    """
+    if topic.strip():
+        style = reference_notes(genre)
+        style_hint = style[1].split(": ", 1)[-1] if len(style) > 1 else ""
+        try:
+            result = ThematicLyricist().generate(
+                theme=topic,
+                language=language,
+                genre_style=style_hint,
+                mood=mood,
+            )
+        except Exception:
+            result = None
+        if result:
+            lyrics, provider = result
+            if genre.lower() == "mugithi" and "[Mũgithi Tempo Switch]" not in lyrics:
+                lyrics = lyrics.replace("[Outro]", "[Mũgithi Tempo Switch]\n\n[Outro]", 1)
+            return lyrics, provider
+    return generate_lyrics_from_topic(topic, language, genre), "template"
+
+
 # In-memory job output store. In production this lives in Redis / the database.
 jobs: Dict[str, dict] = {}
 
@@ -73,6 +102,7 @@ class GenerateLyricsResponse(BaseModel):
     language: str
     topic: str
     references: List[str] = []
+    engine: str = "template"
 
 
 class GenerateSongResponse(BaseModel):
@@ -89,6 +119,7 @@ class JobStatusResponse(BaseModel):
     waveform: List[float] = []
     references: List[str] = []
     engine: str = "local"
+    lyrics_engine: str = "template"
     suno_task_id: Optional[str] = None
     detail: str = ""
 
@@ -186,7 +217,7 @@ def generate_choral_mugithi(req: ChoralVocalRequest, background_tasks: Backgroun
 
     if req.generate:
         job_id = str(uuid.uuid4())
-        lyrics = req.lyrics_snippet.strip() or generate_lyrics_from_topic(req.topic, "gikuyu", "mugithi")
+        lyrics = req.lyrics_snippet.strip() or thematic_lyrics(req.topic, "gikuyu", "mugithi")[0]
         payload = {
             "job_id": job_id,
             "prompt": style_prompt,
@@ -248,11 +279,13 @@ def generate_lyrics(req: GenerateLyricsRequest):
         raise HTTPException(status_code=400, detail="Topic is required.")
     if req.language.lower() not in {"gikuyu", "swahili", "english"}:
         raise HTTPException(status_code=400, detail="Unsupported language.")
+    lyrics, engine = thematic_lyrics(req.topic, req.language, req.genre, req.mood)
     return GenerateLyricsResponse(
-        lyrics=generate_lyrics_from_topic(req.topic, req.language, req.genre),
+        lyrics=lyrics,
         language=req.language,
         topic=req.topic,
         references=reference_notes(req.genre),
+        engine=engine,
     )
 
 
@@ -265,7 +298,10 @@ def generate_song(req: GenerateSongRequest, background_tasks: BackgroundTasks):
 
     job_id = str(uuid.uuid4())
     topic = (req.topic or "").strip() or req.prompt
-    lyrics = (req.lyrics or "").strip() or generate_lyrics_from_topic(topic, req.language, req.genre)
+    lyrics = (req.lyrics or "").strip()
+    lyrics_engine = "user"
+    if not lyrics:
+        lyrics, lyrics_engine = thematic_lyrics(topic, req.language, req.genre, req.mood)
     payload = {
         "job_id": job_id,
         "prompt": req.prompt,
@@ -292,6 +328,7 @@ def generate_song(req: GenerateSongRequest, background_tasks: BackgroundTasks):
         "waveform": [],
         "references": reference_notes(req.genre),
         "engine": "suno" if SunoClient.from_env() else "local",
+        "lyrics_engine": lyrics_engine,
         "suno_task_id": None,
         "title": (req.topic or "").strip() or req.prompt[:60],
         "genre": req.genre,
@@ -776,6 +813,7 @@ def get_job(job_id: str):
         waveform=job.get("waveform", []),
         references=job.get("references", []),
         engine=job.get("engine", "local"),
+        lyrics_engine=job.get("lyrics_engine", "template"),
         suno_task_id=job.get("suno_task_id"),
         detail=job.get("detail") or ("Audio output ready." if job["status"] == "completed" else "Generation in progress."),
     )

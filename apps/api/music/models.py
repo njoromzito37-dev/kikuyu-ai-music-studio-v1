@@ -56,6 +56,11 @@ class Song(models.Model):
     user_prompt = models.TextField()
     compiled_ai_prompt = models.TextField()
     generated_lyrics = models.TextField(blank=True)
+    lyrics_engine = models.CharField(
+        max_length=24,
+        default="template",
+        help_text="Lyric provenance: template | user | deepseek | gemini",
+    )
     language = models.CharField(max_length=16, default="gikuyu")
     mood = models.CharField(max_length=80, default="joyful")
     genre = models.ForeignKey(Genre, on_delete=models.PROTECT, related_name="songs")
