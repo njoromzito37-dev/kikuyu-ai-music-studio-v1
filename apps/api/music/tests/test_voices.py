@@ -106,6 +106,35 @@ class VoiceApiTests(APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_voice_defaults_from_genre_when_omitted(self):
+        gospel = Genre.objects.create(name="Gospel / Kĩrooko", slug="gospel")
+        praise = VoiceProfile.objects.create(
+            name="Praise Leader & Choir",
+            slug="praise-leader",
+            vocal_type=VoiceProfile.VocalType.MIXED_CHOIR,
+            prompt_tags="gospel praise leader with full choir responses",
+        )
+        with patch("music.views.generate_song_task.delay"):
+            response = self.client.post(
+                "/api/generate/",
+                {"title": "Ngoro", "prompt": "Kĩrooko praise song", "genre": "gospel"},
+                format="json",
+            )
+        self.assertEqual(response.status_code, 202)
+        song = Song.objects.get(pk=response.data["id"])
+        self.assertEqual(song.voice, praise)
+        self.assertIn("Vocals: gospel praise leader", song.compiled_ai_prompt)
+
+    def test_slow_groove_tempo_defaults_to_98_for_mugithi(self):
+        with patch("music.views.generate_song_task.delay"):
+            response = self.client.post(
+                "/api/generate/",
+                {"title": "Swing", "prompt": "Mũgithi street dance", "genre": "mugithi"},
+                format="json",
+            )
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(Song.objects.get(pk=response.data["id"]).tempo_bpm, 98)
+
     def test_clone_job_creation_and_dispatch(self):
         song = self._completed_song(self.user)
         with patch("music.views.clone_vocals_task.delay") as dispatch:

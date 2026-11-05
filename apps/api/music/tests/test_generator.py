@@ -210,6 +210,12 @@ class GenerateSongTaskProviderTests(TestCase):
         payload = post.call_args[1]["json"]
         self.assertEqual(payload["genre"], "mugithi")
         self.assertIn("ðaju", payload["phonemes"])
+        # Voice conditioning falls back to the genre's seeded profile, and the
+        # tempo to the slow-groove default.
+        self.assertEqual(payload["voice"], "mugithi-male-lead")
+        self.assertIn("male lead vocalist", payload["voice_prompt"])
+        self.assertEqual(payload["vocal_type"], "male_lead")
+        self.assertEqual(payload["tempo_bpm"], 98)
 
     def test_non_gikuyu_song_sends_empty_phonemes(self):
         song = self._song(language="english")

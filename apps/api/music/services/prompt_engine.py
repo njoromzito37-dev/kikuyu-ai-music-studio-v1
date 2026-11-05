@@ -9,9 +9,9 @@ logger = logging.getLogger(__name__)
 
 
 GENRE_STYLES = {
-    "mugithi": "Mũgithi: acoustic single-guitar groove, fast live dance rhythm, continuous dance sequence, communal call-and-response vocals",
-    "benga": "Kikuyu Benga: brisk 4/4 pulse, interlocking dual electric guitars, driving bassline, syncopated hi-hats, bright melodic hooks",
-    "kikuyu-benga": "Kikuyu Benga: brisk 4/4 pulse, interlocking dual electric guitars, driving bassline, syncopated hi-hats, bright melodic hooks",
+    "mugithi": "Mũgithi: slow-groove 92-105 BPM live dance rhythm, fingerpicked acoustic steel-string guitar leading the downbeats, djembe and calabash swing, laid-back Kenyan street-dance feel, communal call-and-response vocals",
+    "benga": "Kikuyu Benga: relaxed slow-groove 95-105 BPM 4/4 pulse, interlocking dual electric guitars, driving bassline, syncopated hi-hats, bright melodic hooks, laid-back swing",
+    "kikuyu-benga": "Kikuyu Benga: relaxed slow-groove 95-105 BPM 4/4 pulse, interlocking dual electric guitars, driving bassline, syncopated hi-hats, bright melodic hooks, laid-back swing",
     "gospel": "Gospel / Kĩrooko: expressive praise and worship vocals, Pentecostal choir harmonies, energetic praise-dance rhythm or reflective worship dynamics",
     "kirooko": "Gospel / Kĩrooko: expressive praise and worship vocals, Pentecostal choir harmonies, energetic praise-dance rhythm or reflective worship dynamics",
     "mwomboko": "Mwomboko: lilting 3/4 or 6/8 dance meter, accordion melody, crisp metal-shaker rhythm, elegant traditional phrasing",
@@ -164,3 +164,12 @@ class KikuyuPromptEngine:
         if genre == "mugithi":
             lyrics = lyrics.replace("[Outro]", "[Mũgithi Tempo Switch]\n\n[Outro]", 1)
         return lyrics.replace("[Interlude - Guitar Solo]", "[Interlude - Guitar Solo]\n")
+
+
+# Slow-groove pacing: Mũgithi/Benga live dance sits at 92-105 BPM, not pop tempos.
+SLOW_GROOVE_BPM = {"mugithi": 98, "kikuyu-benga": 102, "benga": 102}
+
+
+def default_tempo_bpm(genre_slug):
+    """Genre default tempo; Mũgithi/Benga get the relaxed slow-groove center."""
+    return SLOW_GROOVE_BPM.get(str(genre_slug or "").lower())

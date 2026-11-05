@@ -119,3 +119,24 @@ def voice_options() -> list[dict]:
         }
         for voice in VOICE_CATALOG
     ]
+
+
+# Every generation is conditioned on a voice profile; when the caller doesn't
+# pick one, the genre decides. Prominent lead singing is the default.
+DEFAULT_VOICE_BY_GENRE = {
+    "mugithi": "mugithi-male-lead",
+    "benga": "mugithi-male-lead",
+    "kikuyu-benga": "mugithi-male-lead",
+    "gospel": "praise-leader",
+    "kirooko": "praise-leader",
+    "mwomboko": "duet",
+    "afro-pop": "smooth-tenor",
+    "urban-kikuyu": "smooth-tenor",
+    "acoustic-folk": "mugithi-male-lead",
+    "traditional-chants": "male-choir",
+}
+DEFAULT_VOICE_SLUG = "mugithi-male-lead"
+
+
+def default_voice_slug(genre_slug: str | None = None) -> str:
+    return DEFAULT_VOICE_BY_GENRE.get(str(genre_slug or "").lower(), DEFAULT_VOICE_SLUG)

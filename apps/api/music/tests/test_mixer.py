@@ -49,6 +49,11 @@ class GainStagingTests(TestCase):
 
 
 class ShapeStemTests(TestCase):
+    def test_vocals_high_passed_below_100hz(self):
+        low_rumble = _stereo_sine(60.0, seconds=2.0)
+        shaped = audio_mixer.shape_stem("vocals", low_rumble, SR)
+        self.assertLess(float(np.abs(shaped).mean()), float(np.abs(low_rumble).mean()) * 0.2)
+
     def test_vocals_get_air_and_presence(self):
         noise = _stereo_noise(seconds=1.0)
         shaped = audio_mixer.shape_stem("vocals", noise, SR)

@@ -12,7 +12,8 @@ from django.db import transaction
 from django.utils import timezone
 
 from .models import DjMixJob, DjRenderJob, Song, Stem, VoiceCloneJob
-from .services import audio_mixer, dj_tools, g2p, song_generator, voice_clone
+from .services import audio_mixer, dj_tools, g2p, song_generator, voice_clone, voices
+from .services.prompt_engine import default_tempo_bpm
 
 logger = logging.getLogger(__name__)
 WAVEFORM_BUCKETS = 256
@@ -57,6 +58,9 @@ def generate_song_task(self, song_id):
             song.generation_task_id = self.request.id or ""
             song.save(update_fields=["status", "failure_reason", "generation_task_id", "updated_at"])
 
+        voice = song.voice
+        voice_slug = voice.slug if voice else voices.default_voice_slug(song.genre.slug)
+        voice_entry = voices.get_voice(voice_slug) or {}
         payload = {
             "prompt": song.compiled_ai_prompt,
             "lyrics": song.generated_lyrics,
@@ -65,9 +69,15 @@ def generate_song_task(self, song_id):
             "mood": song.mood,
             "instruments": list(song.chosen_instruments.values_list("slug", flat=True)),
             "duration_seconds": song.duration,
-            "tempo_bpm": song.tempo_bpm,
+            # Slow-groove genre default when no explicit tempo was requested.
+            "tempo_bpm": song.tempo_bpm or default_tempo_bpm(song.genre.slug),
             # Phoneme-level lyric conditioning (Gĩkũyũ G2P) for phoneme-aware backends.
             "phonemes": g2p.lyric_phonemes(song.generated_lyrics, song.language),
+            # Voice conditioning: the seeded VoiceProfile drives prominent,
+            # natural human-style lead singing in the rendered vocal.
+            "voice": voice_slug,
+            "vocal_type": voice.vocal_type if voice else voice_entry.get("vocal_type", ""),
+            "voice_prompt": (voice.prompt_tags if voice else "") or voice_entry.get("prompt_tags", ""),
         }
         provider = song_generator.get_provider()
         with tempfile.TemporaryDirectory() as work_dir:

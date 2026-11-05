@@ -1,7 +1,8 @@
 from rest_framework import serializers
 
 from .models import DjMixJob, DjRenderJob, Genre, Instrument, Song, Stem, VoiceCloneJob, VoiceProfile
-from .services.prompt_engine import KikuyuPromptEngine
+from .services.prompt_engine import KikuyuPromptEngine, default_tempo_bpm
+from .services.voices import default_voice_slug
 
 
 class InstrumentSerializer(serializers.ModelSerializer):
@@ -70,6 +71,10 @@ class GenerateSongSerializer(serializers.Serializer):
                 attrs["genre"] = Genre.objects.get(slug=slug)
             except Genre.DoesNotExist as exc:
                 raise serializers.ValidationError({"genre": "No catalog genre matches this prompt; provide a genre slug."}) from exc
+        if not attrs.get("voice"):
+            # Prominent singing by default: the genre's seeded VoiceProfile.
+            default_slug = default_voice_slug(attrs["genre"].slug)
+            attrs["voice"] = VoiceProfile.objects.filter(is_active=True, slug=default_slug).first()
         return attrs
 
     def create(self, validated_data):
@@ -78,6 +83,8 @@ class GenerateSongSerializer(serializers.Serializer):
         lyrics = validated_data.pop("lyrics", "")
         genre = validated_data["genre"]
         voice = validated_data.get("voice")
+        if not validated_data.get("tempo_bpm"):
+            validated_data["tempo_bpm"] = default_tempo_bpm(genre.slug)
         if not validated_data.get("title"):
             validated_data["title"] = prompt[:80] or "Untitled Song"
         composition = KikuyuPromptEngine().compose(

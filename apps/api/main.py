@@ -11,7 +11,7 @@ from mugithi_engine import INSTRUMENT_CATALOG, reference_notes, render_song
 from suno_client import SUNO_FUNCTIONS, SunoClient, SunoError
 
 from music.services.lyricist import ThematicLyricist
-from music.services.voices import get_voice, voice_options
+from music.services.voices import default_voice_slug, get_voice, voice_options
 
 app = FastAPI(title="Kikuyu AI Music Studio API", version="0.1.0")
 
@@ -304,6 +304,10 @@ def generate_song(req: GenerateSongRequest, background_tasks: BackgroundTasks):
         voice_profile = get_voice(voice_slug)
         if voice_profile is None:
             raise HTTPException(status_code=400, detail=f"Unknown voice profile {voice_slug!r}. See GET /voices.")
+    else:
+        # Always condition on a voice profile: prominent lead singing by default.
+        voice_slug = default_voice_slug(req.genre)
+        voice_profile = get_voice(voice_slug)
 
     job_id = str(uuid.uuid4())
     topic = (req.topic or "").strip() or req.prompt

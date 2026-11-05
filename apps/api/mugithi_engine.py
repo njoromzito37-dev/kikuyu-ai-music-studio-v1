@@ -80,7 +80,7 @@ GENRE_PROGRESSIONS = {
     "acoustic-folk": [(0, "maj"), (5, "min"), (3, "maj"), (4, "maj")],
 }
 
-GENRE_BPM = {"mugithi": 132, "benga": 138, "gospel": 96, "mwomboko": 118, "afro-pop": 104, "acoustic-folk": 92}
+GENRE_BPM = {"mugithi": 98, "benga": 102, "gospel": 96, "mwomboko": 118, "afro-pop": 104, "acoustic-folk": 92}
 
 # How loud each instrument sits in the blend (mix gain) and its pitch
 # offset in semitones relative to its written part.
@@ -501,7 +501,7 @@ def render_song(payload: dict, out_dir: str, stem: str, remaster: bool = False) 
     total_s = sum(bars * 4 * 60 / sec_bpm for _, bars, sec_bpm in sections) + 1.5
     mix = np.zeros(int(SAMPLE_RATE * total_s), dtype=np.float32)
     rng = np.random.default_rng(42)
-    swing = float(payload.get("swing") or 0.08)  # eighth-note swing: speeds/slows off-beats
+    swing = float(payload.get("swing") or 0.12)  # eighth-note swing: laid-back street-dance lilt
 
     # Vocal dynamics: "dynamic"/"emotive" widen the expressive range.
     vocal_dynamics = (payload.get("vocal_dynamics") or "").lower()
@@ -570,8 +570,11 @@ def render_song(payload: dict, out_dir: str, stem: str, remaster: bool = False) 
             t = bar_start + 4 * beat
         section_times[section] = (section_start, t - section_start)
 
-    # Sing the lyrics over the sung sections
-    _place_vocals(mix, key_root, lyrics, section_times, bpm, rng, vocal_energy)
+    # Prominent vocals come from voice-profile-conditioned generation (Suno/YuE)
+    # and RVC cloning. The synthetic guide vocal is only rendered on explicit
+    # request (synth_vocal_guide=true) — never as a robotic default fallback.
+    if payload.get("synth_vocal_guide"):
+        _place_vocals(mix, key_root, lyrics, section_times, bpm, rng, vocal_energy)
 
     # Layer every selected instrument
     _layer_instruments(mix, payload.get("instruments") or [], key_root, progression, sections, bpm, rng)

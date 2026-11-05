@@ -154,8 +154,10 @@ def shape_stem(kind: str, samples: np.ndarray, sample_rate: int) -> np.ndarray:
 
     * bass:    subsonic cleanup only (keeps the 808/guitar low end intact).
     * drums:   subsonic cleanup below 30 Hz.
-    * vocals:  40 Hz high-pass, +2 dB presence at 3 kHz, +3 dB air shelf above
-               10 kHz — cloned Gĩkũyũ vocals stay articulate on top.
+    * vocals:  100 Hz high-pass (clears the 808/sub-bass region), +2.5 dB
+               presence across the 2.5-4 kHz pocket, +3 dB air shelf above
+               10 kHz — cloned Gĩkũyũ vocals stay crystal-clear and
+               front-and-center above the instrumentation.
     * melody/other (traditional strings, synths, guitars): 40 Hz high-pass and
                a -2.5 dB bell at 3 kHz to clear the vocal pocket.
     """
@@ -165,8 +167,8 @@ def shape_stem(kind: str, samples: np.ndarray, sample_rate: int) -> np.ndarray:
     if kind == "drums":
         return dj_tools.butter_filter(samples, sample_rate, 30.0, order=4, kind="highpass")
     if kind == "vocals":
-        shaped = dj_tools.butter_filter(samples, sample_rate, 40.0, order=4, kind="highpass")
-        shaped = _peaking(shaped, sample_rate, 3000.0, 2.0, q=0.9)
+        shaped = dj_tools.butter_filter(samples, sample_rate, 100.0, order=4, kind="highpass")
+        shaped = _peaking(shaped, sample_rate, 3200.0, 2.5, q=0.8)
         return _high_shelf(shaped, sample_rate, 10000.0, 3.0)
     # melody / other
     shaped = dj_tools.butter_filter(samples, sample_rate, 40.0, order=4, kind="highpass")
@@ -418,7 +420,13 @@ def mix_and_master(
         if kind in ("bass", "melody") and np.any(drums):
             data = sidechain_duck(data, drums, sample_rate, threshold_db=-24.0, ratio=6.0, max_reduction_db=12.0)
         if kind == "melody" and np.any(vocals):
-            data = sidechain_duck(data, vocals, sample_rate, threshold_db=-20.0, ratio=3.0, max_reduction_db=6.0)
+            # Dip the mid-range bed on every lead-vocal transient so the
+            # prominent singer stays front-and-center.
+            data = sidechain_duck(
+                data, vocals, sample_rate,
+                threshold_db=-22.0, ratio=4.0, max_reduction_db=8.0,
+                attack_ms=2.0, release_ms=90.0,
+            )
         ducked.append({**stem, "samples": data})
 
     mixed = sum_stems(ducked)
