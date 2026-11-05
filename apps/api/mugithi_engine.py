@@ -16,6 +16,8 @@ from array import array
 
 import numpy as np
 
+from music.services.vocal_synth import sing_syllable, syllabify_lines
+
 SAMPLE_RATE = 22050
 MAX_RENDER_SECONDS = 45
 
@@ -370,58 +372,8 @@ def _lead_phrase(key_root: str, rng, bars: int, octave: int = 5) -> list:
 
 
 # ---------------------------------------------------------------------------
-# Vocal synthesis - a simple singing voice for the lyrics
+# Vocal synthesis - formant singing voice (services/vocal_synth.py)
 # ---------------------------------------------------------------------------
-
-VOWEL_FORMANTS = {
-    "a": [730, 1090, 2440],
-    "e": [530, 1840, 2480],
-    "i": [390, 1990, 2550],
-    "o": [570, 840, 2410],
-    "u": [300, 870, 2240],
-}
-
-
-def _sing_vowel(freq: float, dur: float, vowel: str, intensity: float = 1.0) -> np.ndarray:
-    """Synthesize a sung vowel: glottal pulse source shaped by formant resonances,
-    with vibrato and an amplitude envelope - reads as a vocal line.
-
-    intensity drives vocal dynamics: louder, a touch of upward pitch bend,
-    deeper vibrato, and a crescendo swell across the note."""
-    n = int(SAMPLE_RATE * dur)
-    if n <= 0:
-        return np.zeros(0, dtype=np.float32)
-    t = np.arange(n) / SAMPLE_RATE
-    vibrato = 1.0 + 0.008 * intensity * np.sin(2 * np.pi * 5.5 * t)  # vibrato deepens with intensity
-    bend = 1.0 + 0.004 * intensity * (t / max(dur, 1e-6))  # slight pitch bend up over the note
-    phase = 2 * np.pi * np.cumsum(freq * vibrato * bend) / SAMPLE_RATE
-    sig = np.zeros(n)
-    for harmonic in range(1, 7):
-        sig += (1.0 / harmonic) * np.sin(harmonic * phase)
-    sig *= 0.6  # stronger glottal source
-    # formant resonances give the vowel its character
-    out = np.zeros(n)
-    for formant in VOWEL_FORMANTS.get(vowel.lower(), VOWEL_FORMANTS["a"]):
-        out += _resonate(sig, formant, formant * 0.15)
-    peak = float(np.max(np.abs(out))) or 1.0
-    out = out / peak * 0.9  # normalize each sung note to a consistent level
-    # amplitude envelope: quick attack, sustain, short release
-    env = np.minimum(1.0, np.arange(n) / (0.03 * SAMPLE_RATE))
-    release = max(1, int(0.08 * SAMPLE_RATE))
-    env[-release:] *= np.linspace(1.0, 0.0, release)
-    crescendo = 0.7 + 0.6 * intensity * (t / max(dur, 1e-6))  # swell through the note
-    return (out * env * crescendo).astype(np.float32)
-
-
-def _resonate(x: np.ndarray, center: float, bw: float) -> np.ndarray:
-    """Fast formant resonator via FFT bandpass around `center` Hz."""
-    if len(x) == 0:
-        return x
-    spectrum = np.fft.rfft(x)
-    freqs = np.fft.rfftfreq(len(x), 1 / SAMPLE_RATE)
-    gain = 1.0 / (1.0 + ((freqs - center) / max(bw, 1.0)) ** 2)
-    return np.fft.irfft(spectrum * gain, len(x))
-
 
 def _lyrics_sections(lyrics: str) -> dict:
     """Split structured lyrics into {section: [lines]} by [Section] headers."""
@@ -446,35 +398,50 @@ def _lyrics_sections(lyrics: str) -> dict:
     return sections
 
 
-def _place_vocals(mix: np.ndarray, key_root: str, lyrics: str, section_times: dict, bpm: float, rng, vocal_energy: float = 1.0) -> None:
-    """Sing the lyrics over verse/chorus/outro with dynamics: verses stay
-    intimate, the chorus lifts and doubles, phrases swell toward their end.
-    vocal_energy widens the expressive range when vocal dynamics call for it."""
+def _vocal_melody(key_root: str, count: int, section: str, rng) -> list:
+    """Singable contour: stepwise pentatonic walk; phrase ends resolve home,
+    and the chorus lifts an octave."""
+    base = _midi(key_root, 4)
+    notes = []
+    idx = 0
+    for i in range(count):
+        lift = 12 if section == "chorus" else 0
+        notes.append(base + PENTATONIC[idx] + lift)
+        step = int(rng.integers(-2, 3))  # stepwise motion, small leaps only
+        idx = int(np.clip(idx + step, 0, len(PENTATONIC) - 1))
+        if i % 8 == 7:  # resolve each phrase to the root
+            idx = 0
+    return notes
+
+
+def _place_vocals(mix: np.ndarray, key_root: str, lyrics: str, section_times: dict, bpm: float, rng, vocal_energy: float = 1.0, vocal_type: str = "male_lead") -> None:
+    """Sing every lyric syllable with the formant vocal synth, in the register
+    and ensemble size of the selected voice profile. Verses stay intimate,
+    the chorus lifts, phrases swell toward their ends."""
     lyrics_sections = _lyrics_sections(lyrics)
     if not any(lyrics_sections.values()):
         return
-    base = _midi(key_root, 4)
     beat = 60 / bpm
     for section in ("verse", "chorus", "outro"):
         lines = lyrics_sections.get(section) or []
         if not lines or section not in section_times:
             continue
         start_t, dur_t = section_times[section]
-        words = " ".join(lines).split()
-        if not words:
+        syllables = syllabify_lines(lines)
+        if not syllables:
             continue
-        step = dur_t / len(words)
+        step = dur_t / len(syllables)
+        notes = _vocal_melody(key_root, len(syllables), section, rng)
         section_gain = VOCAL_SECTION_GAIN.get(section, 1.0) * vocal_energy
-        for i, word in enumerate(words):
-            note = base + PENTATONIC[rng.integers(0, len(PENTATONIC))]
-            vowel = next((c for c in word if c.lower() in VOWEL_FORMANTS), "a")
-            note_dur = min(max(step * 0.9, beat * 0.35), beat * 1.1)
-            phrase_pos = i / max(len(words) - 1, 1)
-            intensity = section_gain * (0.85 + 0.3 * phrase_pos)  # phrases swell toward the end
-            _place(mix, _sing_vowel(_freq(note), note_dur, vowel, intensity), start_t + i * step, 1.5)
-            if section == "chorus":
-                # Double the chorus lead a third above for a fuller vocal.
-                _place(mix, _sing_vowel(_freq(note + 4), note_dur, vowel, intensity * 0.7), start_t + i * step, 0.6)
+        for i, (onset, nucleus) in enumerate(syllables):
+            note_dur = min(max(step * 0.95, beat * 0.3), beat * 1.2)
+            phrase_pos = i / max(len(syllables) - 1, 1)
+            intensity = section_gain * (0.85 + 0.3 * phrase_pos)
+            audio = sing_syllable(
+                onset, nucleus, notes[i], note_dur,
+                intensity=intensity, vocal_type=vocal_type, rng=rng, sample_rate=SAMPLE_RATE,
+            )
+            _place(mix, audio, start_t + i * step, 1.6)
 
 
 def render_song(payload: dict, out_dir: str, stem: str, remaster: bool = False) -> dict:
@@ -570,11 +537,12 @@ def render_song(payload: dict, out_dir: str, stem: str, remaster: bool = False) 
             t = bar_start + 4 * beat
         section_times[section] = (section_start, t - section_start)
 
-    # Prominent vocals come from voice-profile-conditioned generation (Suno/YuE)
-    # and RVC cloning. The synthetic guide vocal is only rendered on explicit
-    # request (synth_vocal_guide=true) — never as a robotic default fallback.
-    if payload.get("synth_vocal_guide"):
-        _place_vocals(mix, key_root, lyrics, section_times, bpm, rng, vocal_energy)
+    # Formant singing voice: every lyric syllable is voiced in the selected
+    # voice profile's register and ensemble. instrumental=true renders the
+    # band only; hosted backends (Suno/YuE) replace this synth entirely.
+    if not payload.get("instrumental"):
+        vocal_type = (payload.get("vocal_type") or "male_lead")
+        _place_vocals(mix, key_root, lyrics, section_times, bpm, rng, vocal_energy, vocal_type=vocal_type)
 
     # Layer every selected instrument
     _layer_instruments(mix, payload.get("instruments") or [], key_root, progression, sections, bpm, rng)

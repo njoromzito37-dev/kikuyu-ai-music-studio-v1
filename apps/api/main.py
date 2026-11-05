@@ -89,6 +89,7 @@ class GenerateSongRequest(BaseModel):
     mood: str = Field(default="joyful", description="Mood of the song")
     instruments: Optional[List[str]] = Field(default_factory=lambda: ["acoustic guitar", "bass"])
     voice: Optional[str] = Field(default=None, description="Voice profile slug (male/female/child/choir...); see /voices")
+    instrumental: bool = Field(default=False, description="Render without the sung vocal line")
     duration_sec: int = Field(default=120, ge=30, le=300)
 
 
@@ -331,6 +332,7 @@ def generate_song(req: GenerateSongRequest, background_tasks: BackgroundTasks):
         "voice": voice_slug or None,
         "vocal_type": voice_profile["vocal_type"] if voice_profile else "",
         "voice_prompt": voice_profile["prompt_tags"] if voice_profile else "",
+        "instrumental": bool(req.instrumental),
     }
 
     # In production, this would publish to Celery / Redis.
