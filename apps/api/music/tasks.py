@@ -4,48 +4,18 @@ import shutil
 import subprocess
 import tempfile
 from array import array
+from pathlib import Path
 
-import requests
 from celery import shared_task
-from django.conf import settings
 from django.core.files import File
-from django.core.files.base import ContentFile
 from django.db import transaction
 from django.utils import timezone
 
 from .models import DjMixJob, DjRenderJob, Song, Stem
-from .services import dj_tools
+from .services import dj_tools, g2p, song_generator
 
 logger = logging.getLogger(__name__)
 WAVEFORM_BUCKETS = 256
-DOWNLOAD_CHUNK_BYTES = 64 * 1024
-
-
-def _provider_audio(response, song):
-    content_type = response.headers.get("Content-Type", "").lower()
-    if "application/json" in content_type:
-        payload = response.json()
-        audio_url = payload.get("audio_url")
-        if not audio_url:
-            raise ValueError("Generation provider JSON response must include audio_url.")
-        audio_response = requests.get(audio_url, stream=True, timeout=(30, settings.GENERATION_BACKEND_TIMEOUT))
-        audio_response.raise_for_status()
-        response = audio_response
-        content_type = response.headers.get("Content-Type", "").lower()
-
-    suffix = ".mp3" if "mpeg" in content_type or "mp3" in content_type else ".ogg" if "ogg" in content_type else ".wav"
-    maximum = settings.GENERATION_MAX_AUDIO_BYTES
-    output = bytearray()
-    for chunk in response.iter_content(chunk_size=DOWNLOAD_CHUNK_BYTES):
-        if not chunk:
-            continue
-        output.extend(chunk)
-        if len(output) > maximum:
-            raise ValueError("Generated audio exceeds the configured size limit.")
-    if not output:
-        raise ValueError("Generation provider returned an empty audio stream.")
-    filename = f"song-{song.pk}{suffix}"
-    return ContentFile(bytes(output), name=filename)
 
 
 def _waveform(path):
@@ -87,12 +57,6 @@ def generate_song_task(self, song_id):
             song.generation_task_id = self.request.id or ""
             song.save(update_fields=["status", "failure_reason", "generation_task_id", "updated_at"])
 
-        endpoint = settings.GENERATION_BACKEND_URL
-        if not endpoint:
-            raise RuntimeError("GENERATION_BACKEND_URL is not configured.")
-        headers = {"Accept": "audio/*, application/json"}
-        if settings.GENERATION_BACKEND_API_KEY:
-            headers["Authorization"] = f"Bearer {settings.GENERATION_BACKEND_API_KEY}"
         payload = {
             "prompt": song.compiled_ai_prompt,
             "lyrics": song.generated_lyrics,
@@ -102,26 +66,17 @@ def generate_song_task(self, song_id):
             "instruments": list(song.chosen_instruments.values_list("slug", flat=True)),
             "duration_seconds": song.duration,
             "tempo_bpm": song.tempo_bpm,
+            # Phoneme-level lyric conditioning (Gĩkũyũ G2P) for phoneme-aware backends.
+            "phonemes": g2p.lyric_phonemes(song.generated_lyrics, song.language),
         }
-        response = requests.post(
-            endpoint,
-            json=payload,
-            headers=headers,
-            stream=True,
-            timeout=(30, settings.GENERATION_BACKEND_TIMEOUT),
-        )
-        response.raise_for_status()
-        audio_content = _provider_audio(response, song)
-
-        with tempfile.NamedTemporaryFile(suffix=os.path.splitext(audio_content.name)[1]) as temporary_audio:
-            for chunk in audio_content.chunks():
-                temporary_audio.write(chunk)
-            temporary_audio.flush()
-            waveform = _waveform(temporary_audio.name)
-            temporary_audio.seek(0)
+        provider = song_generator.get_provider()
+        with tempfile.TemporaryDirectory() as work_dir:
+            audio_path = provider.render(payload, Path(work_dir), filename_hint=f"song-{song.pk}")
+            waveform = _waveform(str(audio_path))
             with transaction.atomic():
                 song = Song.objects.select_for_update().get(pk=song_id)
-                song.audio_file.save(audio_content.name, File(temporary_audio), save=False)
+                with open(audio_path, "rb") as handle:
+                    song.audio_file.save(f"{audio_path.stem}{audio_path.suffix}", File(handle), save=False)
                 song.audio_waveform_data = waveform
                 song.status = Song.Status.COMPLETED
                 song.failure_reason = ""

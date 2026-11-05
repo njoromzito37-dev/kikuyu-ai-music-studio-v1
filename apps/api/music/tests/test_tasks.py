@@ -25,7 +25,7 @@ class GenerateSongTaskTests(TestCase):
 
         with tempfile.TemporaryDirectory() as media_root:
             with override_settings(MEDIA_ROOT=media_root, GENERATION_BACKEND_URL="https://provider.test/generate"):
-                with patch("music.tasks.requests.post", return_value=provider_response) as request:
+                with patch("music.services.song_generator.requests.post", return_value=provider_response) as request:
                     with patch("music.tasks._waveform", return_value=[0.1, 0.8]):
                         result = generate_song_task.apply(args=[song.pk], throw=True).get()
 

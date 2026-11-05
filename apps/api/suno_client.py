@@ -8,6 +8,7 @@ concat, mashup, persona creation, style boost, task status, and quota.
 Configure via environment:
   SUNO_API_KEY   - Bearer token (required to enable)
   SUNO_API_BASE  - defaults to https://api.sunoapi.org
+  SUNO_MODEL     - model id for all generation calls (default V4_5)
 """
 
 import os
@@ -15,6 +16,7 @@ import os
 import requests
 
 DEFAULT_BASE = "https://api.sunoapi.org"
+DEFAULT_MODEL = os.getenv("SUNO_MODEL", "V4_5")
 
 # Every enabled function, for capability reporting.
 SUNO_FUNCTIONS = [
@@ -74,7 +76,7 @@ class SunoClient:
         return self._request("POST", path, json=body)
 
     # --- Generation -------------------------------------------------------
-    def generate_custom(self, prompt, style, title, instrumental=False, model="V4_5", callback_url=None):
+    def generate_custom(self, prompt, style, title, instrumental=False, model=DEFAULT_MODEL, callback_url=None):
         """Custom-mode generation: prompt = lyrics (or empty), style = genre tags."""
         body = {
             "customMode": True,
@@ -88,7 +90,7 @@ class SunoClient:
             body["callBackUrl"] = callback_url
         return self._post("/api/v1/generate", body)
 
-    def generate_description(self, description, instrumental=False, model="V4_5"):
+    def generate_description(self, description, instrumental=False, model=DEFAULT_MODEL):
         """Simple mode: generate from a natural-language description."""
         return self._post("/api/v1/generate", {
             "customMode": False,
@@ -108,28 +110,28 @@ class SunoClient:
         return self._request("GET", f"/api/v1/lyrics/record-info?taskId={task_id}")
 
     # --- Extend / Cover ----------------------------------------------------
-    def extend(self, audio_id, prompt="", style="", title="", continue_at=0, model="V4_5", callback_url=None):
+    def extend(self, audio_id, prompt="", style="", title="", continue_at=0, model=DEFAULT_MODEL, callback_url=None):
         body = {"audioId": audio_id, "defaultParamFlag": True, "prompt": prompt,
                 "style": style, "title": title, "continueAt": continue_at, "model": model}
         if callback_url:
             body["callBackUrl"] = callback_url
         return self._post("/api/v1/generate/extend", body)
 
-    def cover(self, audio_id, prompt="", style="", title="", model="V4_5", callback_url=None):
+    def cover(self, audio_id, prompt="", style="", title="", model=DEFAULT_MODEL, callback_url=None):
         body = {"audioId": audio_id, "defaultParamFlag": True, "prompt": prompt,
                 "style": style, "title": title, "model": model}
         if callback_url:
             body["callBackUrl"] = callback_url
         return self._post("/api/v1/generate/cover", body)
 
-    def upload_extend(self, upload_url, prompt="", style="", title="", continue_at=0, model="V4_5", callback_url=None):
+    def upload_extend(self, upload_url, prompt="", style="", title="", continue_at=0, model=DEFAULT_MODEL, callback_url=None):
         body = {"uploadUrl": upload_url, "defaultParamFlag": True, "prompt": prompt,
                 "style": style, "title": title, "continueAt": continue_at, "model": model}
         if callback_url:
             body["callBackUrl"] = callback_url
         return self._post("/api/v1/generate/upload-extend", body)
 
-    def upload_cover(self, upload_url, prompt="", style="", title="", model="V4_5", callback_url=None):
+    def upload_cover(self, upload_url, prompt="", style="", title="", model=DEFAULT_MODEL, callback_url=None):
         body = {"uploadUrl": upload_url, "defaultParamFlag": True, "prompt": prompt,
                 "style": style, "title": title, "model": model}
         if callback_url:
@@ -137,13 +139,13 @@ class SunoClient:
         return self._post("/api/v1/generate/upload-cover", body)
 
     # --- Vocals / Instrumentals -------------------------------------------
-    def add_vocals(self, upload_url, prompt, style, title, model="V4_5", callback_url=None):
+    def add_vocals(self, upload_url, prompt, style, title, model=DEFAULT_MODEL, callback_url=None):
         body = {"uploadUrl": upload_url, "prompt": prompt, "style": style, "title": title, "model": model}
         if callback_url:
             body["callBackUrl"] = callback_url
         return self._post("/api/v1/generate/add-vocals", body)
 
-    def add_instrumental(self, upload_url, title, tags, model="V4_5", callback_url=None):
+    def add_instrumental(self, upload_url, title, tags, model=DEFAULT_MODEL, callback_url=None):
         body = {"uploadUrl": upload_url, "title": title, "tags": tags, "model": model}
         if callback_url:
             body["callBackUrl"] = callback_url
@@ -175,7 +177,7 @@ class SunoClient:
     def concat(self, task_id, clips):
         return self._post("/api/v1/generate/concat", {"taskId": task_id, "clips": clips})
 
-    def mashup(self, task_ids, model="V4_5", callback_url=None):
+    def mashup(self, task_ids, model=DEFAULT_MODEL, callback_url=None):
         body = {"taskIdList": task_ids, "model": model}
         if callback_url:
             body["callBackUrl"] = callback_url

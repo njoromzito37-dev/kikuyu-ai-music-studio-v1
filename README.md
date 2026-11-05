@@ -110,6 +110,18 @@ Configure via environment variables (repo-root `.env`):
 
 No new Python dependencies are required (uses `requests`).
 
+### Song rendering providers & phoneme conditioning
+
+The Celery generation task renders through a provider seam (`music/services/song_generator.py`). Every payload now carries a `phonemes` field — Gĩkũyũ lyrics converted to IPA-ish phonemes by the rule-based G2P in `music/services/g2p.py` (section tags pass through untouched) — so phoneme-aware backends can align sung vocals.
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `GENERATION_PROVIDER` | `http` (POST to `GENERATION_BACKEND_URL`) or `yue` (self-hosted YuE) | `http` |
+| `YUE_REPO_DIR` | YuE checkout on the GPU worker | `third_party/YuE` |
+| `YUE_STAGE1_MODEL` / `YUE_STAGE2_MODEL` | YuE checkpoints | `m-a-p/YuE-s1-7B-anneal-en-cot` / `m-a-p/YuE-s2-1B-general` |
+| `YUE_MAX_NEW_TOKENS` / `YUE_TIMEOUT` / `YUE_CUDA_IDX` | YuE inference tuning | `4800` / `3600` / `0` |
+| `SUNO_MODEL` | Suno model id used by every client call | `V4_5` |
+
 ### 3) Start the worker
 
 ```bash
